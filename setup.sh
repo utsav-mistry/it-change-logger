@@ -28,9 +28,38 @@ npm --version
 echo "[3/8] Installing MongoDB..."
 if ! command -v mongod &>/dev/null; then
   UBUNTU_CODENAME=$(lsb_release -sc)
+  # MongoDB packaging lags behind Ubuntu releases. 24.04 ("noble") is not yet
+  # recognized by the Mongo repository, which is why apt complained about a
+  # missing Release file.  Fallback to a known supported codename (jammy) when
+  # necessary.  This keeps the setup script working on newer distros.
+  case "${UBUNTU_CODENAME}" in
+    jammy|focal|bionic|xenial)
+      MONGO_CODENAME="${UBUNTU_CODENAME}"
+      ;;
+    *)
+      echo "[3/8] Warning: Ubuntu codename '${UBUNTU_CODENAME}' may not be
+      supported by the MongoDB repo; using 'jammy' instead."
+      MONGO_CODENAME="jammy"
+      ;;
+  esac
+
   curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
-  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${UBUNTU_CODENAME}/mongodb-org/7.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-  apt-get update -qq
+  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${MONGO_CODENAME}/mongodb-org/7.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+  # try updating package list; if it fails and we weren't already using the
+  # jammy codename, try again using jammy. this helps when UBUNTU_CODENAME was
+  # a newer unsupported name like "noble".
+  if ! apt-get update -qq; then
+    if [ "${MONGO_CODENAME}" != "jammy" ]; then
+      echo "[3/8] Initial apt update failed for '${MONGO_CODENAME}', retrying with 'jammy'..."
+      echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+      apt-get update -qq
+    else
+      echo "[3/8] apt update failed even for codename '${MONGO_CODENAME}'." >&2
+      echo "Please check your network or the repository manually." >&2
+      exit 1
+    fi
+  fi
+
   apt-get install -y -q mongodb-org
 fi
 systemctl enable mongod
