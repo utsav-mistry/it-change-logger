@@ -12,6 +12,13 @@ echo "========================================="
 # ── Step 1: System packages ────────────────────────────────────────────────────
 echo "[1/8] Installing system packages..."
 export DEBIAN_FRONTEND=noninteractive
+
+# remove or correct any existing MongoDB repo that references an unsupported codename
+if [ -f "/etc/apt/sources.list.d/mongodb-org-7.0.list" ]; then
+  # replace known problematic codenames such as noble with jammy so initial update succeeds
+  sed -i 's|noble|jammy|g' /etc/apt/sources.list.d/mongodb-org-7.0.list || true
+fi
+
 apt-get update -qq
 apt-get install -y -q curl wget gnupg2 lsb-release ca-certificates python3 make g++ git
 
@@ -28,20 +35,27 @@ npm --version
 echo "[3/8] Installing MongoDB..."
 if ! command -v mongod &>/dev/null; then
   UBUNTU_CODENAME=$(lsb_release -sc)
-  # MongoDB packaging lags behind Ubuntu releases. 24.04 ("noble") is not yet
-  # recognized by the Mongo repository, which is why apt complained about a
-  # missing Release file.  Fallback to a known supported codename (jammy) when
-  # necessary.  This keeps the setup script working on newer distros.
+  # MongoDB packaging lags behind Ubuntu releases; newer codenames (noble,
+  # lunar, etc.) aren’t yet published by the upstream repo.  Always fall back to
+  # a known supported release (jammy) when we detect an unsupported codename.
+  #
+  # The pre-update patch above already normalises any existing list file, but we
+  # also guard here in case the script is run interactively on a clean system.
   case "${UBUNTU_CODENAME}" in
     jammy|focal|bionic|xenial)
       MONGO_CODENAME="${UBUNTU_CODENAME}"
       ;;
     *)
-      echo "[3/8] Warning: Ubuntu codename '${UBUNTU_CODENAME}' may not be
+      echo "[3/8] Warning: Ubuntu codename '${UBUNTU_CODENAME}' is not
       supported by the MongoDB repo; using 'jammy' instead."
       MONGO_CODENAME="jammy"
       ;;
   esac
+
+  # ensure we start with a fresh repository file
+  if [ -f "/etc/apt/sources.list.d/mongodb-org-7.0.list" ]; then
+    rm -f "/etc/apt/sources.list.d/mongodb-org-7.0.list"
+  fi
 
   curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
   echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu ${MONGO_CODENAME}/mongodb-org/7.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list
