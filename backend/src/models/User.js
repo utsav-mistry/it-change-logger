@@ -6,12 +6,17 @@ const userSchema = new mongoose.Schema({
     password: { type: String, required: true },
     displayName: { type: String, required: true, trim: true },
     email: { type: String, trim: true, lowercase: true },
-    role: { type: String, enum: ['Admin', 'IT Admin'], default: 'IT Admin' },
+    role: { type: String, enum: ['Admin', 'IT Admin', 'User'], default: 'User' },
     department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', default: null },
     isDepartmentHead: { type: Boolean, default: false },
     totpSecret: { type: String, default: null },
     totpEnabled: { type: Boolean, default: false },
     totpEnrolled: { type: Boolean, default: false },
+    totpRecoveryCodes: [{
+        codeHash: { type: String },
+        createdAt: { type: Date, default: Date.now },
+        usedAt: { type: Date, default: null },
+    }],
     isActive: { type: Boolean, default: true },
     mustChangeTOTP: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -28,7 +33,7 @@ userSchema.methods.comparePassword = async function (plainPassword) {
     return bcrypt.compare(plainPassword, this.password);
 };
 
-userSchema.index({ username: 1 });
+// unique constraint on username already creates an index
 userSchema.index({ department: 1 });
 userSchema.index({ role: 1 });
 

@@ -47,7 +47,12 @@ exports.createIncident = async (req, res) => {
             action: 'create',
         });
 
-        res.status(201).json({ message: 'Incident created', incident });
+        // Re-fetch with populated user refs so the response has displayName etc.
+        const populated = await Incident.findById(incident._id)
+            .populate('createdInToolBy', 'username displayName')
+            .populate('handledByUser', 'username displayName');
+
+        res.status(201).json({ message: 'Incident created', incident: populated });
     } catch (err) {
         res.status(500).json({ message: 'Server error', error: err.message });
     }
@@ -138,6 +143,15 @@ exports.updateIncident = async (req, res) => {
         if (!incident) return res.status(404).json({ message: 'Incident not found' });
 
         const updates = req.body;
+        // Prevent editing of incident details when the incident is in 'Resolved' (closed) state
+        const closedDetailFields = ['observation', 'steps', 'resolution', 'resolutionTime', 'handledByType', 'handledByUser', 'handledByName'];
+        if (incident.state === 'Resolved') {
+            for (const f of closedDetailFields) {
+                if (updates[f] !== undefined && JSON.stringify(updates[f]) !== JSON.stringify(incident[f])) {
+                    return res.status(400).json({ message: 'Incident is resolved — details cannot be edited. Reopen the incident to modify details.' });
+                }
+            }
+        }
         const auditEntries = [];
 
         for (const field of MUTABLE_FIELDS) {
@@ -193,7 +207,13 @@ exports.updateIncident = async (req, res) => {
             }
         }
 
-        res.json({ message: 'Incident updated', incident });
+        // Re-fetch with populated user refs so the response has displayName etc.
+        const populated = await Incident.findById(incident._id)
+            .populate('createdInToolBy', 'username displayName')
+            .populate('handledByUser', 'username displayName')
+            .populate('archivedBy', 'username displayName');
+
+        res.json({ message: 'Incident updated', incident: populated });
     } catch (err) {
         res.status(500).json({ message: 'Server error', error: err.message });
     }

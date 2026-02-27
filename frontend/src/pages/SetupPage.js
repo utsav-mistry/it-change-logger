@@ -17,6 +17,10 @@ export default function SetupPage({ onComplete }) {
     const [userId, setUserId] = useState(null);
     const [totpToken, setTotpToken] = useState('');
     const [error, setError] = useState('');
+    const [recoveryCodes, setRecoveryCodes] = useState(null);
+    const [codesDownloaded, setCodesDownloaded] = useState(false);
+    const [redirecting, setRedirecting] = useState(false);
+    const [countdown, setCountdown] = useState(5);
 
     const handleLogoUpload = (e) => {
         const file = e.target.files[0];
@@ -29,6 +33,20 @@ export default function SetupPage({ onComplete }) {
             setForm(f => ({ ...f, logoBase64: base64, logoMimeType: mimeType }));
         };
         reader.readAsDataURL(file);
+    };
+
+    const startRedirect = () => {
+        setRedirecting(true);
+        let count = 5;
+        setCountdown(count);
+        const interval = setInterval(() => {
+            count -= 1;
+            setCountdown(count);
+            if (count <= 0) {
+                clearInterval(interval);
+                onComplete();
+            }
+        }, 1000);
     };
 
     const handleNext = async () => {
@@ -61,9 +79,13 @@ export default function SetupPage({ onComplete }) {
             if (!totpToken || totpToken.length !== 6) { setError('Enter a 6-digit code'); return; }
             setLoading(true);
             try {
-                await api.post('/setup/confirm-totp', { userId, token: totpToken });
-                toast.success('Setup complete! You can now login.');
-                onComplete();
+                const res = await api.post('/setup/confirm-totp', { userId, token: totpToken });
+                const codes = res.data.recoveryCodes;
+                if (codes && Array.isArray(codes) && codes.length > 0) {
+                    setRecoveryCodes(codes);
+                } else {
+                    startRedirect();
+                }
             } catch (e) {
                 setError(e.response?.data?.message || 'Invalid code');
             } finally {
@@ -72,14 +94,97 @@ export default function SetupPage({ onComplete }) {
         }
     };
 
+    // ── Redirect countdown screen ───────────────────────────────────────────────
+    if (redirecting) {
+        const progress = (countdown / 5) * 100;
+        return (
+            <div className="setup-wrap">
+                <div className="setup-card" style={{ position: 'relative', overflow: 'hidden', textAlign: 'center' }}>
+                    {/* Success icon */}
+                    <div style={{
+                        width: 72, height: 72, borderRadius: '50%',
+                        background: 'linear-gradient(135deg, var(--success), #34d399)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        margin: '0 auto 20px',
+                        boxShadow: '0 0 0 12px rgba(34,197,94,0.1)',
+                        animation: 'setup-pop 0.4s cubic-bezier(0.175,0.885,0.32,1.275) both',
+                    }}>
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+                            stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                    </div>
+
+                    <h2 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>Setup Complete!</h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
+                        Your IT Incident Logger is ready.<br />
+                        Redirecting you to the login page&hellip;
+                    </p>
+
+                    {/* Countdown circle */}
+                    <div style={{
+                        width: 56, height: 56, borderRadius: '50%',
+                        border: '3px solid var(--border)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        margin: '0 auto 12px',
+                        background: 'var(--bg-surface)',
+                        fontSize: 22, fontWeight: 700,
+                        color: 'var(--accent)',
+                    }}>
+                        {countdown}
+                    </div>
+
+                    <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 24 }}>
+                        Redirecting in {countdown} second{countdown !== 1 ? 's' : ''}…
+                    </p>
+
+                    <button
+                        className="btn btn-primary"
+                        onClick={onComplete}
+                        style={{ marginBottom: 8 }}
+                    >
+                        Go to Login →
+                    </button>
+
+                    {/* Draining progress bar at the very bottom of the card */}
+                    <div style={{
+                        position: 'absolute', bottom: 0, left: 0, right: 0,
+                        height: 4,
+                        background: 'var(--border)',
+                        borderRadius: '0 0 var(--radius-lg) var(--radius-lg)',
+                        overflow: 'hidden',
+                    }}>
+                        <div style={{
+                            height: '100%',
+                            width: `${progress}%`,
+                            background: 'linear-gradient(90deg, var(--success), #34d399)',
+                            transition: 'width 1s linear',
+                            borderRadius: 'inherit',
+                        }} />
+                    </div>
+                </div>
+
+                <style>{`
+                    @keyframes setup-pop {
+                        from { transform: scale(0.5); opacity: 0; }
+                        to   { transform: scale(1);   opacity: 1; }
+                    }
+                `}</style>
+            </div>
+        );
+    }
+
     return (
-        <div className="setup-page">
+        <div className="setup-wrap">
             <div className="setup-card">
                 <div className="setup-logo">IT</div>
                 <h2 style={{ textAlign: 'center', marginBottom: 4 }}>Initial Setup</h2>
                 <p style={{ textAlign: 'center', marginBottom: 28, fontSize: 13, color: 'var(--text-muted)' }}>
                     Configure your IT Incident Logger
                 </p>
+                <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                    <a href="/setup/terms">View Terms of Service</a>
+                </div>
 
                 {/* Step indicators */}
                 <div className="step-indicator" style={{ justifyContent: 'center', marginBottom: 32 }}>
@@ -175,15 +280,56 @@ export default function SetupPage({ onComplete }) {
                     </div>
                 )}
 
-                <button
-                    className="btn btn-primary w-full"
-                    style={{ marginTop: 8 }}
-                    onClick={handleNext}
-                    disabled={loading}
-                >
-                    {loading ? <span className="spinner" /> : null}
-                    {step === steps.length - 1 ? 'Complete Setup' : 'Next →'}
-                </button>
+                {recoveryCodes && (
+                    <div style={{ marginTop: 12 }}>
+                        <div className="alert alert-warning" style={{ textAlign: 'left', marginBottom: 12 }}>
+                            <strong>Save these recovery codes now!</strong> Each code can be used once to log in if you ever lose access to your authenticator app. They will not be shown again.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginBottom: 16 }}>
+                            {recoveryCodes.map(c => (
+                                <div key={c} className="card" style={{ padding: 10, fontFamily: 'monospace', textAlign: 'center', fontSize: 13 }}>{c}</div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
+                            <button
+                                className="btn btn-secondary w-full"
+                                onClick={() => {
+                                    const text = recoveryCodes.join('\n');
+                                    const blob = new Blob([text], { type: 'text/plain' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = 'recovery-codes.txt';
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                    setCodesDownloaded(true);
+                                }}
+                            >
+                                ⬇ Download Recovery Codes
+                            </button>
+                            <button
+                                className="btn btn-primary w-full"
+                                disabled={!codesDownloaded}
+                                title={!codesDownloaded ? 'Please download your recovery codes first' : ''}
+                                onClick={startRedirect}
+                            >
+                                {codesDownloaded ? 'Finish Setup →' : 'Download codes to continue'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {!recoveryCodes && (
+                    <button
+                        className="btn btn-primary w-full"
+                        style={{ marginTop: 8 }}
+                        onClick={handleNext}
+                        disabled={loading}
+                    >
+                        {loading ? <span className="spinner" /> : null}
+                        {step === steps.length - 1 ? 'Verify & Complete' : 'Next →'}
+                    </button>
+                )}
             </div>
         </div>
     );

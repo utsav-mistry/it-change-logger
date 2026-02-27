@@ -76,8 +76,9 @@ export default function Reports() {
             a.click();
             URL.revokeObjectURL(url);
             toast.success(`${format} downloaded`);
-        } catch {
-            toast.error(`${format} export failed`);
+        } catch (err) {
+            console.error(`Export error:`, err);
+            toast.error(err.response?.data?.message || `${format} export failed`);
         } finally {
             setExporting(null);
         }
@@ -166,7 +167,7 @@ export default function Reports() {
                                     { label: 'Total', value: data.total },
                                     { label: 'Resolved', value: data.resolved },
                                     { label: 'Unresolved', value: data.unresolved },
-                                    { label: 'Avg Resolution', value: `${data.avgResolutionHours}h` },
+                                    { label: 'Avg Resolution', value: data.avgResolutionFormatted || '0h 0m 0s' },
                                 ].map(s => (
                                     <div key={s.label} className="stat-card" style={{ padding: '10px 14px' }}>
                                         <div className="stat-label">{s.label}</div>
@@ -295,6 +296,7 @@ export default function Reports() {
                                         <th>Priority</th>
                                         <th>State</th>
                                         <th>Product</th>
+                                        <th>Dept Head</th>
                                         <th>Raised By</th>
                                         <th>Handler</th>
                                         <th>Raised At</th>
@@ -308,6 +310,10 @@ export default function Reports() {
                                             <td><span className={`badge badge-${(inc.priority || '').toLowerCase()}`}>{inc.priority}</span></td>
                                             <td><span className={`badge badge-${(inc.state || '').toLowerCase().replace(/ /g, '')}`}>{inc.state}</span></td>
                                             <td className="text-sm">{inc.product}</td>
+                                            <td className="text-sm text-muted">
+                                                {(['Admin', 'IT Admin'].includes(inc.createdInToolBy?.role) || (inc.createdInToolBy?.department?.head && inc.createdInToolBy.department.head._id === inc.createdInToolBy._id))
+                                                    ? '—' : (inc.createdInToolBy?.department?.head?.displayName || '—')}
+                                            </td>
                                             <td className="text-sm text-muted">{inc.raisedBy}</td>
                                             <td className="text-sm text-muted">
                                                 {inc.handledByType === 'self' ? (inc.createdInToolBy?.displayName || '—')

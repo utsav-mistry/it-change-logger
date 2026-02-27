@@ -49,8 +49,8 @@ incidentSchema.pre('save', async function (next) {
     next();
 });
 
-// Indexes for performance
-incidentSchema.index({ incidentId: 1 });
+// Indexes for performance (unique incidentId already indexed automatically)
+// incidentSchema.index({ incidentId: 1 });
 incidentSchema.index({ raisedAt: -1 });
 incidentSchema.index({ state: 1 });
 incidentSchema.index({ priority: 1 });

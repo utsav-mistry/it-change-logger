@@ -10,6 +10,8 @@ export default function WorkLog() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [confirmSubmit, setConfirmSubmit] = useState(false);
     const [content, setContent] = useState('');
     const [history, setHistory] = useState([]);
     const [histTotal, setHistTotal] = useState(0);
@@ -19,8 +21,17 @@ export default function WorkLog() {
 
     useEffect(() => {
         api.get('/worklogs/my/today')
-            .then(r => { setToday(r.data); setContent(r.data.content || ''); })
-            .catch(() => { })
+            .then(r => {
+                // 204 = no draft yet this day — show clean empty editor
+                if (r.status === 204 || !r.data) {
+                    setToday(null);
+                    setContent('');
+                } else {
+                    setToday(r.data);
+                    setContent(r.data.content || '');
+                }
+            })
+            .catch(() => { setToday(null); setContent(''); })
             .finally(() => setLoading(false));
     }, []);
 
@@ -50,17 +61,32 @@ export default function WorkLog() {
         }
     };
 
+    const deleteDraft = async (id) => {
+        try {
+            await api.delete(`/worklogs/${id}`);
+            toast.success('Draft deleted');
+            setConfirmDelete(false);
+            const r = await api.get('/worklogs/my/today').catch(() => null);
+            if (!r || r.status === 204 || !r.data) { setToday(null); setContent(''); }
+            else { setToday(r.data); setContent(r.data.content || ''); }
+            if (view === 'history') fetchHistory(histPage);
+        } catch (e) {
+            toast.error(e.response?.data?.message || 'Delete failed');
+            setConfirmDelete(false);
+        }
+    };
+
     const submitLog = async () => {
         if (today?.isSubmitted) return;
         const plainText = content.replace(/<[^>]+>/g, '').trim();
         if (!plainText) { toast.error('Work log cannot be empty'); return; }
-        if (!window.confirm('Submit today\'s work log? You will not be able to edit it after submission.')) return;
         setSubmitting(true);
         try {
             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const res = await api.post('/worklogs/my/submit', { content, timezone: tz });
             setToday(res.data.log);
-            toast.success('Work log submitted');
+            setConfirmSubmit(false);
+            toast.success('Work log submitted — it is now locked.');
         } catch (e) {
             toast.error(e.response?.data?.message || 'Submit failed');
         } finally {
@@ -101,9 +127,13 @@ export default function WorkLog() {
                         <div className="alert alert-success mb-4">
                             Submitted at {formatDateTime(today.submittedAt, today.submittedAtTimezone)}. This log is now read-only.
                         </div>
+                    ) : today?._id ? (
+                        <div className="alert alert-info mb-4">
+                            Draft in progress for {serverDate}. Save anytime. Once submitted the entry is locked.
+                        </div>
                     ) : (
                         <div className="alert alert-info mb-4">
-                            Entry for today ({serverDate}). Save draft at any time. After submission, the entry is locked.
+                            No entry yet for {serverDate}. Start writing below and click <strong>Save Draft</strong> or <strong>Submit</strong> when ready.
                         </div>
                     )}
 
@@ -132,15 +162,41 @@ export default function WorkLog() {
                     </div>
 
                     {!today?.isSubmitted && (
-                        <div className="flex gap-3">
+                        <div className="flex gap-3" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
                             <button className="btn btn-secondary" onClick={saveDraft} disabled={saving}>
                                 {saving ? <Spinner /> : null}
                                 Save Draft
                             </button>
-                            <button className="btn btn-primary" onClick={submitLog} disabled={submitting}>
-                                {submitting ? <Spinner /> : null}
-                                Submit Work Log
-                            </button>
+
+                            {/* Delete Draft — inline confirm */}
+                            {today?._id && !confirmDelete && (
+                                <button className="btn btn-outline" onClick={() => setConfirmDelete(true)} disabled={saving}>
+                                    Delete Draft
+                                </button>
+                            )}
+                            {today?._id && confirmDelete && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                                    <span style={{ color: 'var(--danger)', fontWeight: 500 }}>Delete draft?</span>
+                                    <button className="btn btn-danger btn-sm" onClick={() => deleteDraft(today._id)}>Yes, delete</button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
+                                </span>
+                            )}
+
+                            {/* Submit — inline confirm */}
+                            {!confirmSubmit && (
+                                <button className="btn btn-primary" onClick={() => setConfirmSubmit(true)} disabled={submitting}>
+                                    Submit Work Log
+                                </button>
+                            )}
+                            {confirmSubmit && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                                    <span style={{ color: 'var(--warning)', fontWeight: 500 }}>This cannot be undone</span>
+                                    <button className="btn btn-primary btn-sm" onClick={submitLog} disabled={submitting}>
+                                        {submitting ? <Spinner /> : 'Confirm Submit'}
+                                    </button>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmSubmit(false)}>Cancel</button>
+                                </span>
+                            )}
                         </div>
                     )}
                 </>
@@ -178,12 +234,19 @@ export default function WorkLog() {
                                                 {(log.content || '').replace(/<[^>]+>/g, '').slice(0, 80) || '(empty)'}
                                             </td>
                                             <td>
-                                                <button
-                                                    className="btn btn-secondary btn-sm"
-                                                    onClick={() => setExpandedId(expandedId === log._id ? null : log._id)}
-                                                >
-                                                    {expandedId === log._id ? 'Collapse' : 'View'}
-                                                </button>
+                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                    <button
+                                                        className="btn btn-secondary btn-sm"
+                                                        onClick={() => setExpandedId(expandedId === log._id ? null : log._id)}
+                                                    >
+                                                        {expandedId === log._id ? 'Collapse' : 'View'}
+                                                    </button>
+                                                    {!log.isSubmitted && (
+                                                        <button className="btn btn-outline btn-sm" onClick={() => deleteDraft(log._id)}>
+                                                            Delete
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                         {expandedId === log._id && (

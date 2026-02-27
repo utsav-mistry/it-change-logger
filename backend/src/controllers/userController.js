@@ -2,8 +2,10 @@ const User = require('../models/User');
 const Department = require('../models/Department');
 const Notification = require('../models/Notification');
 const AuthenticatorChangeRequest = require('../models/AuthenticatorChangeRequest');
-const { totp } = require('otplib');
+const CompanySettings = require('../models/CompanySettings');
+const { authenticator } = require('otplib');
 const QRCode = require('qrcode');
+const { createRecoveryCodes } = require('../utils/totp');
 const logger = require('../utils/logger');
 
 // List all users
@@ -23,7 +25,11 @@ exports.listUsers = async (req, res) => {
         const total = await User.countDocuments(query);
         const users = await User.find(query)
             .select('-password -totpSecret')
-            .populate('department', 'name')
+            .populate({
+                path: 'department',
+                select: 'name head',
+                populate: { path: 'head', select: 'displayName' }
+            })
             .skip((page - 1) * limit)
             .limit(parseInt(limit))
             .sort({ createdAt: -1 });
@@ -57,14 +63,14 @@ exports.createUser = async (req, res) => {
         if (existing) return res.status(409).json({ message: 'Username already taken' });
 
         // Generate TOTP secret
-        const secret = totp.generateSecret();
+        const secret = authenticator.generateSecret();
 
         const user = new User({
             username: username.toLowerCase().trim(),
             password,
             displayName: displayName.trim(),
             email: email ? email.toLowerCase().trim() : '',
-            role: role || 'IT Admin',
+            role: role || 'User',
             department: department || null,
             totpSecret: secret,
             totpEnabled: false,
@@ -92,18 +98,35 @@ exports.updateUser = async (req, res) => {
         const user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ message: 'User not found' });
 
+        const oldDeptId = user.department;
         if (displayName) user.displayName = displayName.trim();
         if (email !== undefined) user.email = email.toLowerCase().trim();
         if (role) user.role = role;
-        if (department !== undefined) user.department = department || null;
+
+        let deptChanged = false;
+        if (department !== undefined && String(oldDeptId) !== String(department)) {
+            user.department = department || null;
+            deptChanged = true;
+        }
+
         if (isActive !== undefined) user.isActive = isActive;
         if (isDepartmentHead !== undefined) user.isDepartmentHead = isDepartmentHead;
 
         await user.save();
 
-        // Update department head ref if needed
-        if (isDepartmentHead && department) {
-            await Department.findByIdAndUpdate(department, { head: user._id });
+        // If user was head of old dept and moved, remove them as head of old dept
+        if (deptChanged && oldDeptId) {
+            await Department.findOneAndUpdate({ _id: oldDeptId, head: user._id }, { head: null });
+        }
+
+        // If user is now a dept head, update the department's head ref
+        if (user.isDepartmentHead && user.department) {
+            await Department.findByIdAndUpdate(user.department, { head: user._id });
+        }
+
+        // If user is NOT a dept head anymore, ensure no department points to them as head
+        if (!user.isDepartmentHead) {
+            await Department.updateMany({ head: user._id }, { head: null });
         }
 
         res.json({ message: 'User updated' });
@@ -136,16 +159,39 @@ exports.requestTotpChange = async (req, res) => {
 
         // Admin/IT Admin can change their own without approval
         if (user.role === 'Admin' || user.role === 'IT Admin') {
-            const secret = totp.generateSecret();
-            const otpAuthUrl = `otpauth://totp/IT-Logger:${user.username}?secret=${secret}&issuer=IT-Logger`;
+            const secret = authenticator.generateSecret();
+            const settings = await CompanySettings.findOne();
+            const appLabel = settings?.companyName ? `${settings.companyName} IT Logger` : 'IT Logger';
+            const otpAuthUrl = `otpauth://totp/${encodeURIComponent(appLabel)}:${encodeURIComponent(user.username)}?secret=${secret}&issuer=${encodeURIComponent(appLabel)}`;
             const qrDataUrl = await QRCode.toDataURL(otpAuthUrl);
 
             user.totpSecret = secret;
             user.totpEnabled = false;
             user.totpEnrolled = false;
+            user.mustChangeTOTP = true;
             await user.save();
 
-            return res.json({ qrDataUrl, secret, message: 'New TOTP ready. Please re-enroll.' });
+            // Create an auto-approved request so they can see it in Notifications
+            const changeReq = new AuthenticatorChangeRequest({
+                requestedBy: user._id,
+                status: 'approved',
+                reviewedBy: user._id,
+                reviewedAt: new Date(),
+                reviewNote: 'Self-reset by admin',
+                newTotpSecret: secret,
+                newTotpQr: qrDataUrl,
+            });
+            await changeReq.save();
+
+            await Notification.create({
+                recipient: user._id,
+                type: 'totp_approved',
+                title: 'Authenticator Reset (Self)',
+                message: 'You have reset your own authenticator. Please scan the new QR code in Notifications.',
+                data: { requestId: changeReq._id },
+            });
+
+            return res.json({ message: 'Authenticator reset. Check your Notifications for the new QR code.' });
         }
 
         // Check pending request
@@ -154,8 +200,10 @@ exports.requestTotpChange = async (req, res) => {
             return res.status(409).json({ message: 'Pending TOTP change request already exists' });
         }
 
-        const secret = totp.generateSecret();
-        const otpAuthUrl = `otpauth://totp/IT-Logger:${user.username}?secret=${secret}&issuer=IT-Logger`;
+        const secret = authenticator.generateSecret();
+        const settings = await CompanySettings.findOne();
+        const appLabel = settings?.companyName ? `${settings.companyName} IT Logger` : 'IT Logger';
+        const otpAuthUrl = `otpauth://totp/${encodeURIComponent(appLabel)}:${encodeURIComponent(user.username)}?secret=${secret}&issuer=${encodeURIComponent(appLabel)}`;
         const qrDataUrl = await QRCode.toDataURL(otpAuthUrl);
 
         const changeReq = new AuthenticatorChangeRequest({
@@ -254,15 +302,17 @@ exports.reviewTotpRequest = async (req, res) => {
                 type: 'totp_approved',
                 title: 'Authenticator Change Approved',
                 message: 'Your authenticator change request has been approved. Please re-enroll.',
-                data: { requestId: changeReq._id, qrDataUrl: changeReq.newTotpQr },
+                data: { requestId: changeReq._id },
             });
         } else {
             await Notification.create({
                 recipient: requestor._id,
                 type: 'totp_rejected',
                 title: 'Authenticator Change Rejected',
-                message: `Your authenticator change request was rejected. ${note || ''}`,
-                data: { requestId: changeReq._id },
+                message: note
+                    ? `Your request was rejected: "${note}"`
+                    : 'Your authenticator change request was rejected by an admin.',
+                data: { requestId: changeReq._id, note: note || '' },
             });
         }
 
@@ -285,7 +335,31 @@ exports.getApprovedTotpQr = async (req, res) => {
             status: 'approved'
         }).sort({ createdAt: -1 });
 
-        if (!changeReq) return res.status(404).json({ message: 'No approved request found' });
+        if (!changeReq || !changeReq.newTotpQr) {
+            return res.status(404).json({ message: 'QR code no longer available or already scanned' });
+        }
+
+        // If viewed more than 10s ago, it's expired
+        if (changeReq.qrViewedAt && (Date.now() - new Date(changeReq.qrViewedAt).getTime() > 10000)) {
+            changeReq.newTotpQr = null;
+            await changeReq.save();
+            return res.status(410).json({ message: 'QR code expired for security reasons' });
+        }
+
+        // Start the 10s timer on first view
+        if (!changeReq.qrViewedAt) {
+            changeReq.qrViewedAt = new Date();
+            await changeReq.save();
+
+            // Background deletion
+            setTimeout(async () => {
+                try {
+                    await AuthenticatorChangeRequest.findByIdAndUpdate(changeReq._id, { newTotpQr: null });
+                } catch (err) {
+                    console.error('Failed to auto-delete QR:', err);
+                }
+            }, 10000);
+        }
 
         res.json({ qrDataUrl: changeReq.newTotpQr, secret: user.totpSecret });
     } catch (err) {
@@ -311,6 +385,30 @@ exports.changePassword = async (req, res) => {
         await user.save();
         res.json({ message: 'Password changed' });
     } catch (err) {
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Generate (or regenerate) recovery codes for a user. Returns plain codes once.
+exports.generateRecoveryCodes = async (req, res) => {
+    try {
+        const targetId = req.params.id;
+        const requester = req.user;
+        // allow if self or admin
+        if (requester.userId !== targetId && !(requester.role === 'Admin' || requester.role === 'IT Admin')) {
+            return res.status(403).json({ message: 'Not authorized' });
+        }
+
+        const user = await User.findById(targetId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const { plain, entries } = await createRecoveryCodes(10);
+        user.totpRecoveryCodes = entries;
+        await user.save();
+
+        res.json({ message: 'Recovery codes generated', recoveryCodes: plain });
+    } catch (err) {
+        logger.error(`Generate recovery codes error: ${err.message}`);
         res.status(500).json({ message: 'Server error' });
     }
 };

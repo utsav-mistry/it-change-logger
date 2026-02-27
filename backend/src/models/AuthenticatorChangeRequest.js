@@ -8,6 +8,7 @@ const authenticatorChangeRequestSchema = new mongoose.Schema({
     reviewNote: { type: String, default: '' },
     newTotpSecret: { type: String, default: null },
     newTotpQr: { type: String, default: null },
+    qrViewedAt: { type: Date, default: null },
     expiresAt: { type: Date, default: () => new Date(Date.now() + 48 * 60 * 60 * 1000) },
 }, { timestamps: true });
 

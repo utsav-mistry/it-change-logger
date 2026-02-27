@@ -81,7 +81,7 @@ export default function IncidentList() {
             {/* Filter bar */}
             <div className="filter-bar">
                 <div className="search-bar">
-                    <span className="search-icon">🔍</span>
+                    <span className="search-icon">&#x2315;</span>
                     <input
                         className="form-control"
                         placeholder="Search issue, product, resolution..."
@@ -155,7 +155,7 @@ export default function IncidentList() {
             {loading ? (
                 <LoadingPage />
             ) : incidents.length === 0 ? (
-                <EmptyState icon="📭" title="No incidents found" description="Try adjusting your filters" />
+                <EmptyState title="No incidents found" description="Try adjusting your filters" />
             ) : (
                 <>
                     <div className="table-container">

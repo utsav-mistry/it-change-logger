@@ -4,16 +4,23 @@ import { useToast } from '../context/ToastContext';
 import api from '../api/client';
 
 export default function Profile() {
-    const { user, refreshUser } = useAuth();
+    const { user } = useAuth();
     const toast = useToast();
     const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
     const [pwLoading, setPwLoading] = useState(false);
     const [totpLoading, setTotpLoading] = useState(false);
-    const [totpQrData, setTotpQrData] = useState(null);
+    const [recoveryCodes, setRecoveryCodes] = useState(null);
     const [profile, setProfile] = useState(null);
 
+    const fetchProfile = async () => {
+        try {
+            const r = await api.get('/auth/profile');
+            setProfile(r.data);
+        } catch { }
+    };
+
     useEffect(() => {
-        api.get('/auth/profile').then(r => setProfile(r.data)).catch(() => { });
+        fetchProfile();
     }, []);
 
     const handlePasswordChange = async (e) => {
@@ -40,8 +47,11 @@ export default function Profile() {
         try {
             const res = await api.post('/users/request-totp-change');
             if (res.data.qrDataUrl) {
-                setTotpQrData(res.data.qrDataUrl);
-                toast.success('New authenticator QR code generated. Scan and log in to enroll.');
+                // For Admins/IT Admins, they might get a QR immediately. 
+                // However, user requested QR ONLY in notifications.
+                // But for self-reset, we can show it here or tell them to check notifications.
+                // To be safe and follow "QR ONLY in notifications", let's tell them to check notifications even for self-reset.
+                toast.success('Authenticator reset. Please check your Notifications for the new QR code.');
             } else {
                 toast.success('Authenticator change request submitted. Awaiting admin approval.');
             }
@@ -49,6 +59,20 @@ export default function Profile() {
             toast.error(e.response?.data?.message || 'Request failed');
         } finally {
             setTotpLoading(false);
+        }
+    };
+
+    const handleGenerateRecovery = async () => {
+        try {
+            const res = await api.post(`/users/${profile._id}/totp/recovery/generate`);
+            if (res.data.recoveryCodes) {
+                setRecoveryCodes(res.data.recoveryCodes);
+                toast.success('Recovery codes generated — save them now.');
+            } else {
+                toast.success(res.data.message || 'Recovery codes generated');
+            }
+        } catch (e) {
+            toast.error(e.response?.data?.message || 'Failed to generate recovery codes');
         }
     };
 
@@ -81,22 +105,28 @@ export default function Profile() {
                     </div>
                     <div>
                         <div className="info-item-label">Last Login</div>
-                        <div className="info-item-value">{profile?.lastLogin ? new Date(profile.lastLogin).toLocaleString() : 'Not recorded'}</div>
+                        <div className="info-item-value">{profile?.lastLogin ? new Date(profile.lastLogin).toLocaleString() : '—'}</div>
                     </div>
                     <div>
-                        <div className="info-item-label">TOTP Status</div>
-                        <div className="info-item-value">
-                            {user?.totpEnrolled
-                                ? <span className="badge badge-resolved">Enrolled</span>
-                                : <span className="badge badge-onhold">Not enrolled</span>}
+                        <div className="info-item-label">Is Dept Head</div>
+                        <div className="info-item-value">{profile?.isDepartmentHead ? 'Yes' : 'No'}</div>
+                    </div>
+                    {!(['Admin', 'IT Admin'].includes(profile?.role) || (profile?.department?.head && profile.department.head._id === profile._id)) && (
+                        <div>
+                            <div className="info-item-label">Reports To</div>
+                            <div className="info-item-value">{profile?.department?.head?.displayName || '—'}</div>
                         </div>
-                    </div>
-                    <div>
-                        <div className="info-item-label">Department Head</div>
-                        <div className="info-item-value">{user?.isDepartmentHead ? 'Yes' : 'No'}</div>
-                    </div>
+                    )}
                 </div>
             </div>
+
+            {/* Re-enrollment Notification Banner (No QR here) */}
+            {profile?.mustChangeTOTP && (
+                <div className="alert alert-warning mb-4" style={{ fontSize: 13 }}>
+                    <strong>Action Required: Re-enroll your Authenticator</strong><br />
+                    Your authenticator change was approved. Please go to your <strong>Notifications</strong> to scan the secure QR code.
+                </div>
+            )}
 
             {/* Change Password */}
             <div className="card mb-4">
@@ -129,27 +159,16 @@ export default function Profile() {
                 </form>
             </div>
 
-            {/* Authenticator */}
+            {/* Authenticator Request */}
             <div className="card">
                 <div className="card-header">
                     <span className="card-title">Authenticator App</span>
                 </div>
                 <p className="text-secondary mb-4" style={{ fontSize: 13 }}>
                     {user?.role === 'Admin' || user?.role === 'IT Admin'
-                        ? 'You can reset your authenticator directly. A new QR code will be generated.'
+                        ? 'You can reset your authenticator directly. A new QR code will be generated in your Notifications.'
                         : 'Changing your authenticator requires approval from an Admin, IT Admin, or your Department Head.'}
                 </p>
-
-                {totpQrData && (
-                    <div className="mb-4">
-                        <div className="alert alert-success mb-3">
-                            Scan this QR code with your authenticator app. You must log out and log back in to complete enrollment.
-                        </div>
-                        <div className="qr-wrap">
-                            <img src={totpQrData} alt="Authenticator QR Code" width={180} height={180} />
-                        </div>
-                    </div>
-                )}
 
                 <button className="btn btn-secondary btn-sm" onClick={handleTotpRequest} disabled={totpLoading}>
                     {totpLoading ? <span className="spinner" /> : null}
@@ -157,6 +176,20 @@ export default function Profile() {
                         ? 'Reset Authenticator'
                         : 'Request Authenticator Change'}
                 </button>
+                <button className="btn btn-outline btn-sm" style={{ marginLeft: 8 }} onClick={handleGenerateRecovery}>Generate Recovery Codes</button>
+
+                {recoveryCodes && (
+                    <div style={{ marginTop: 12 }}>
+                        <div className="alert alert-info" style={{ textAlign: 'left' }}>
+                            Recovery codes — store them securely. Each code can be used once.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginBottom: 12 }}>
+                            {recoveryCodes.map(c => (
+                                <div key={c} className="card" style={{ padding: 10, fontFamily: 'monospace', textAlign: 'center' }}>{c}</div>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

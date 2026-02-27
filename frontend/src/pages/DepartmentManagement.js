@@ -11,6 +11,7 @@ export default function DepartmentManagement() {
     const [showModal, setShowModal] = useState(false);
     const [editDept, setEditDept] = useState(null);
     const [form, setForm] = useState({ name: '', description: '', headUserId: '' });
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
     const fetchAll = async () => {
         setLoading(true);
@@ -55,13 +56,14 @@ export default function DepartmentManagement() {
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('Deactivate this department?')) return;
         try {
             await api.delete(`/departments/${id}`);
             toast.success('Department deactivated');
+            setConfirmDeleteId(null);
             fetchAll();
         } catch (e) {
             toast.error('Failed');
+            setConfirmDeleteId(null);
         }
     };
 
@@ -80,7 +82,7 @@ export default function DepartmentManagement() {
                     {departments.map(dept => (
                         <div key={dept._id} className="card">
                             <div style={{ marginBottom: 12 }}>
-                                <h3 style={{ fontSize: 16 }}>🏢 {dept.name}</h3>
+                                <h3 style={{ fontSize: 16 }}>{dept.name}</h3>
                                 {dept.description && <p className="text-sm text-muted mt-1">{dept.description}</p>}
                             </div>
                             <div style={{ padding: '8px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
@@ -101,7 +103,15 @@ export default function DepartmentManagement() {
                             </div>
                             <div className="flex gap-2">
                                 <button className="btn btn-secondary btn-sm flex-1" onClick={() => openEdit(dept)}>Edit</button>
-                                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(dept._id)}>✕</button>
+                                {confirmDeleteId !== dept._id ? (
+                                    <button className="btn btn-danger btn-sm" onClick={() => setConfirmDeleteId(dept._id)} title="Deactivate">Del</button>
+
+                                ) : (
+                                    <>
+                                        <button className="btn btn-danger btn-sm" onClick={() => handleDelete(dept._id)}>Yes</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteId(null)}>No</button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     ))}

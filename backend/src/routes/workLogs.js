@@ -15,5 +15,6 @@ router.get('/my/history', workLogController.getMyHistory);
 router.get('/admin/all', requireAdmin, workLogController.adminListLogs);
 router.get('/admin/export/csv', requireAdmin, workLogController.exportCSV);
 router.get('/admin/export/pdf', requireAdmin, workLogController.exportPDF);
+router.delete('/:id', workLogController.deleteLog);
 
 module.exports = router;

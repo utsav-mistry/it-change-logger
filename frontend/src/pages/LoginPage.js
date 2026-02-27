@@ -10,23 +10,21 @@ export default function LoginPage() {
     const toast = useToast();
     const [step, setStep] = useState('credentials'); // credentials | totp_verify | totp_enroll
     const [company, setCompany] = useState(null);
-    const [form, setForm] = useState({ username: '', password: '', token: '' });
+    const [form, setForm] = useState({ username: '', password: '', token: '', recoveryCode: '' });
     const [userId, setUserId] = useState(null);
     const [qrData, setQrData] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
     const [termsAccepted, setTermsAccepted] = useState(false);
-    const [showTerms, setShowTerms] = useState(false);
-    const firstLogin = !localStorage.getItem('terms_accepted');
+    // Show terms immediately on first render if never accepted — no flicker, no useEffect delay
+    const [showTerms, setShowTerms] = useState(() => !localStorage.getItem('terms_accepted'));
+    const [useRecovery, setUseRecovery] = useState(false); // toggle recovery code login
 
     useEffect(() => {
         api.get('/setup/company').then(r => setCompany(r.data)).catch(() => { });
-        if (firstLogin) setShowTerms(true);
     }, []);
 
     const handleCredentials = async (e) => {
         e.preventDefault();
-        setError('');
         setLoading(true);
         try {
             const res = await api.post('/auth/login', {
@@ -41,7 +39,7 @@ export default function LoginPage() {
                 setStep('totp_verify');
             }
         } catch (e) {
-            setError(e.response?.data?.message || 'Login failed');
+            toast.error(e.response?.data?.message || 'Invalid username or password');
         } finally {
             setLoading(false);
         }
@@ -49,8 +47,7 @@ export default function LoginPage() {
 
     const handleTotpVerify = async (e) => {
         e.preventDefault();
-        setError('');
-        if (!form.token || form.token.length !== 6) { setError('Enter 6-digit code'); return; }
+        if (!form.token || form.token.length !== 6) { toast.error('Enter a 6-digit code from your authenticator app'); return; }
         setLoading(true);
         try {
             const res = await api.post('/auth/verify-totp', { userId, token: form.token });
@@ -59,7 +56,8 @@ export default function LoginPage() {
             navigate('/dashboard');
             toast.success(`Welcome back, ${res.data.user.displayName}!`);
         } catch (e) {
-            setError(e.response?.data?.message || 'Invalid code');
+            toast.error(e.response?.data?.message || 'Invalid or expired TOTP code');
+            setForm(f => ({ ...f, token: '' }));
         } finally {
             setLoading(false);
         }
@@ -67,8 +65,7 @@ export default function LoginPage() {
 
     const handleTotpEnroll = async (e) => {
         e.preventDefault();
-        setError('');
-        if (!form.token || form.token.length !== 6) { setError('Enter 6-digit code'); return; }
+        if (!form.token || form.token.length !== 6) { toast.error('Enter the 6-digit code from your authenticator app'); return; }
         setLoading(true);
         try {
             const res = await api.post('/auth/enroll-totp', { userId, token: form.token });
@@ -77,18 +74,38 @@ export default function LoginPage() {
             navigate('/dashboard');
             toast.success(`Welcome, ${res.data.user.displayName}!`);
         } catch (e) {
-            setError(e.response?.data?.message || 'Invalid code');
+            toast.error(e.response?.data?.message || 'Invalid code — check your authenticator and try again');
+            setForm(f => ({ ...f, token: '' }));
         } finally {
             setLoading(false);
         }
     };
 
-    const stepLabels = { credentials: 'Sign In', totp_verify: 'Verify Identity', totp_enroll: 'Setup Authenticator' };
+    const handleRecoveryVerify = async (e) => {
+        e.preventDefault();
+        if (!form.recoveryCode || form.recoveryCode.trim().length < 6) { toast.error('Enter your recovery code'); return; }
+        setLoading(true);
+        try {
+            const res = await api.post('/auth/verify-recovery', { userId, code: form.recoveryCode.trim() });
+            login(res.data.token, res.data.user);
+            localStorage.setItem('terms_accepted', 'true');
+            navigate('/dashboard');
+            toast.success(`Welcome back, ${res.data.user.displayName}! Recovery code used — please generate new codes.`);
+        } catch (e) {
+            toast.error(e.response?.data?.message || 'Invalid or already-used recovery code');
+            setForm(f => ({ ...f, recoveryCode: '' }));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const stepLabels = { credentials: 'Sign In', totp_verify: useRecovery ? 'Recovery Code' : 'Verify Identity', totp_enroll: 'Setup Authenticator' };
 
     return (
-        <div className="login-page">
+        <div className="login-wrap">
             {/* Terms modal for first login */}
-            {showTerms && (
+            {/* Only show the terms modal while on the credentials step, never during TOTP */}
+            {showTerms && step === 'credentials' && (
                 <div className="modal-overlay">
                     <div className="modal" style={{ maxWidth: 640 }}>
                         <div className="modal-header">
@@ -138,15 +155,15 @@ export default function LoginPage() {
                             width: 80, height: 80, borderRadius: 16,
                             background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 36, margin: '0 auto 24px'
-                        }}>🛡️</div>
+                            fontSize: 32, margin: '0 auto 24px', fontWeight: 'bold', color: 'white'
+                        }}>IT</div>
                     )}
                     <h1 style={{ fontSize: '1.8rem', marginBottom: 12 }}>{company?.companyName || 'IT Logger'}</h1>
                     <p style={{ color: 'var(--text-secondary)', maxWidth: 320, margin: '0 auto', fontSize: 15, lineHeight: 1.7 }}>
                         Secure internal IT Change and Incident Management
                     </p>
                     <div style={{ marginTop: 48, display: 'flex', gap: 16, justifyContent: 'center' }}>
-                        {['🔒 Secure', '📋 Audited', '⚡ Fast'].map(item => (
+                        {['Secure', 'Audited', 'Fast'].map(item => (
                             <div key={item} style={{
                                 background: 'rgba(59,130,246,0.1)',
                                 border: '1px solid rgba(59,130,246,0.2)',
@@ -175,8 +192,6 @@ export default function LoginPage() {
                         {step === 'totp_verify' && 'Enter the code from your authenticator app'}
                         {step === 'totp_enroll' && 'Scan the QR code and enter the 6-digit code'}
                     </p>
-
-                    {error && <div className="alert alert-error">{error}</div>}
 
                     {step === 'credentials' && (
                         <form onSubmit={handleCredentials}>
@@ -210,7 +225,7 @@ export default function LoginPage() {
                         </form>
                     )}
 
-                    {step === 'totp_verify' && (
+                    {step === 'totp_verify' && !useRecovery && (
                         <form onSubmit={handleTotpVerify}>
                             <div className="form-group">
                                 <label>6-Digit TOTP Code</label>
@@ -229,8 +244,42 @@ export default function LoginPage() {
                                 Verify & Login
                             </button>
                             <button type="button" className="btn btn-secondary w-full" style={{ marginTop: 8 }}
-                                onClick={() => { setStep('credentials'); setError(''); }}>
+                                onClick={() => { setStep('credentials'); setError(''); setUseRecovery(false); }}>
                                 ← Back
+                            </button>
+                            <div style={{ textAlign: 'center', marginTop: 12 }}>
+                                <button type="button" className="btn btn-ghost btn-sm"
+                                    style={{ color: 'var(--text-muted)', fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer' }}
+                                    onClick={() => { setUseRecovery(true); setError(''); }}>
+                                    Lost access to authenticator? Use a recovery code
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    {step === 'totp_verify' && useRecovery && (
+                        <form onSubmit={handleRecoveryVerify}>
+                            <div className="alert alert-warning" style={{ marginBottom: 16, fontSize: 12 }}>
+                                Recovery codes are single-use. After login, visit Profile to generate new codes.
+                            </div>
+                            <div className="form-group">
+                                <label>Recovery Code</label>
+                                <input
+                                    className="form-control font-mono"
+                                    placeholder="xxxxxx-xxxxxx"
+                                    value={form.recoveryCode}
+                                    onChange={e => setForm(f => ({ ...f, recoveryCode: e.target.value }))}
+                                    autoFocus
+                                    style={{ textAlign: 'center', fontSize: 16, letterSpacing: 4 }}
+                                />
+                            </div>
+                            <button type="submit" className="btn btn-primary w-full" disabled={loading}>
+                                {loading ? <span className="spinner" /> : null}
+                                Login with Recovery Code
+                            </button>
+                            <button type="button" className="btn btn-secondary w-full" style={{ marginTop: 8 }}
+                                onClick={() => { setUseRecovery(false); setError(''); }}>
+                                ← Back to Authenticator
                             </button>
                         </form>
                     )}

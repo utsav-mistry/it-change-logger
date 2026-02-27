@@ -71,6 +71,15 @@ exports.deleteDepartment = async (req, res) => {
     try {
         const dept = await Department.findById(req.params.id);
         if (!dept) return res.status(404).json({ message: 'Department not found' });
+
+        // Clean up head flag
+        if (dept.head) {
+            await User.findByIdAndUpdate(dept.head, { isDepartmentHead: false });
+        }
+
+        // Move all users in this department to null
+        await User.updateMany({ department: dept._id }, { department: null });
+
         dept.isActive = false;
         await dept.save();
         res.json({ message: 'Department deactivated' });

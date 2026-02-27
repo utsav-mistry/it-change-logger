@@ -15,6 +15,8 @@ export default function UserManagement() {
     const [showModal, setShowModal] = useState(false);
     const [editUser, setEditUser] = useState(null);
     const [totpRequests, setTotpRequests] = useState([]);
+    const [totpReviewModal, setTotpReviewModal] = useState({ open: false, requestId: null, action: null, note: '' });
+    const [confirmDeactivateId, setConfirmDeactivateId] = useState(null);
 
     const [form, setForm] = useState({
         username: '', displayName: '', email: '', password: '', role: 'IT Admin', department: '',
@@ -74,7 +76,6 @@ export default function UserManagement() {
     };
 
     const handleDeactivate = async (userId) => {
-        if (!window.confirm('Deactivate this user?')) return;
         try {
             await api.delete(`/users/${userId}`);
             toast.success('User deactivated');
@@ -84,11 +85,18 @@ export default function UserManagement() {
         }
     };
 
-    const handleTotpReview = async (requestId, action) => {
+
+    const openTotpReview = (requestId, action) => {
+        setTotpReviewModal({ open: true, requestId, action, note: '' });
+    };
+
+    const handleTotpReview = async () => {
+        const { requestId, action, note } = totpReviewModal;
         try {
-            await api.post(`/users/totp-requests/${requestId}/review`, { action });
-            toast.success(`Request ${action}d`);
+            await api.post(`/users/totp-requests/${requestId}/review`, { action, note });
+            toast.success(action === 'approve' ? 'Request approved — user notified with new QR code.' : 'Request rejected — user notified.');
             setTotpRequests(prev => prev.filter(r => r._id !== requestId));
+            setTotpReviewModal({ open: false, requestId: null, action: null, note: '' });
         } catch (e) {
             toast.error(e.response?.data?.message || 'Failed');
         }
@@ -101,14 +109,17 @@ export default function UserManagement() {
                     <h1>User Management</h1>
                     <p className="text-secondary mt-1">{total} users total</p>
                 </div>
-                <button className="btn btn-primary" onClick={openCreate}>+ New User</button>
+                <div className="flex gap-2">
+                    <button className="btn btn-secondary" onClick={() => fetchUsers(page)} title="Refresh to see latest TOTP status">Refresh</button>
+                    <button className="btn btn-primary" onClick={openCreate}>+ New User</button>
+                </div>
             </div>
 
             {/* TOTP Change Requests */}
             {totpRequests.length > 0 && (
                 <div className="card mb-6">
                     <div className="card-header">
-                        <h3>🔑 Pending Authenticator Change Requests</h3>
+                        <h3>Pending Authenticator Change Requests</h3>
                         <span className="badge badge-open">{totpRequests.length} pending</span>
                     </div>
                     {totpRequests.map(req => (
@@ -122,8 +133,14 @@ export default function UserManagement() {
                                 <div className="text-sm text-muted mt-1">Requested {new Date(req.createdAt).toLocaleString()}</div>
                             </div>
                             <div className="flex gap-2">
-                                <button className="btn btn-success btn-sm" onClick={() => handleTotpReview(req._id, 'approve')}>Approve</button>
-                                <button className="btn btn-danger btn-sm" onClick={() => handleTotpReview(req._id, 'reject')}>Reject</button>
+                                <button className="btn btn-success btn-sm"
+                                    onClick={() => openTotpReview(req._id, 'approve')}>
+                                    Approve
+                                </button>
+                                <button className="btn btn-danger btn-sm"
+                                    onClick={() => openTotpReview(req._id, 'reject')}>
+                                    Reject
+                                </button>
                             </div>
                         </div>
                     ))}
@@ -133,7 +150,7 @@ export default function UserManagement() {
             {/* Search */}
             <div className="filter-bar mb-4">
                 <div className="search-bar" style={{ flex: 1 }}>
-                    <span className="search-icon">🔍</span>
+                    <span className="search-icon">&#x2315;</span>
                     <input className="form-control" placeholder="Search users..."
                         value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
@@ -149,7 +166,8 @@ export default function UserManagement() {
                                     <th>Username</th>
                                     <th>Role</th>
                                     <th>Department</th>
-                                    <th>TOTP</th>
+                                    <th>Dept Head</th>
+                                    <th title="TOTP status updates after user first logs in and scans their QR code">TOTP</th>
                                     <th>Status</th>
                                     <th>Last Login</th>
                                     <th>Actions</th>
@@ -162,8 +180,9 @@ export default function UserManagement() {
                                         <td className="font-mono text-muted">@{u.username}</td>
                                         <td><span className="badge badge-open">{u.role}</span></td>
                                         <td className="text-muted">{u.department?.name || '—'}</td>
+                                        <td className="text-muted">{(u.role === 'Admin' || u.role === 'IT Admin' || (u.department?.head && u.department.head._id === u._id)) ? '—' : (u.department?.head?.displayName || '—')}</td>
                                         <td>
-                                            {u.totpEnrolled
+                                            {(u.totpEnrolled || u.totpEnabled)
                                                 ? <span className="badge badge-resolved">Enrolled</span>
                                                 : <span className="badge badge-onhold">Pending</span>}
                                         </td>
@@ -173,15 +192,22 @@ export default function UserManagement() {
                                                 : <span className="badge badge-archived">Inactive</span>}
                                         </td>
                                         <td className="text-muted text-sm">
-                                            {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}
+                                            {u.lastLogin ? new Date(u.lastLogin).toLocaleString() : '—'}
                                         </td>
                                         <td>
                                             <div className="flex gap-2">
                                                 <button className="btn btn-secondary btn-sm" onClick={() => openEdit(u)}>Edit</button>
-                                                {u.isActive && (
-                                                    <button className="btn btn-danger btn-sm" onClick={() => handleDeactivate(u._id)}>
+                                                {u.isActive && confirmDeactivateId !== u._id && (
+                                                    <button className="btn btn-danger btn-sm" onClick={() => setConfirmDeactivateId(u._id)}>
                                                         Deactivate
                                                     </button>
+                                                )}
+                                                {u.isActive && confirmDeactivateId === u._id && (
+                                                    <span style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12 }}>
+                                                        <span style={{ color: 'var(--danger)', fontWeight: 500 }}>Sure?</span>
+                                                        <button className="btn btn-danger btn-sm" onClick={() => { handleDeactivate(u._id); setConfirmDeactivateId(null); }}>Yes</button>
+                                                        <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeactivateId(null)}>No</button>
+                                                    </span>
                                                 )}
                                             </div>
                                         </td>
@@ -227,6 +253,7 @@ export default function UserManagement() {
                                 onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
                                 <option>Admin</option>
                                 <option>IT Admin</option>
+                                <option>User</option>
                             </select>
                         </div>
                         <div className="form-group">
@@ -244,6 +271,61 @@ export default function UserManagement() {
                             <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
                         </div>
                     </form>
+                </Modal>
+            )}
+
+            {/* TOTP Review Modal */}
+            {totpReviewModal.open && (
+                <Modal
+                    title={totpReviewModal.action === 'approve' ? 'Approve Authenticator Change' : 'Reject Authenticator Change'}
+                    onClose={() => setTotpReviewModal({ open: false, requestId: null, action: null, note: '' })}
+                >
+                    {totpReviewModal.action === 'approve' ? (
+                        <>
+                            <div className="alert alert-info mb-4" style={{ fontSize: 13 }}>
+                                Approving this request will generate a new QR code for the user.
+                                They will receive a notification with the QR code to scan and re-enroll their authenticator.
+                            </div>
+                            <div className="flex gap-3">
+                                <button className="btn btn-primary flex-1" onClick={handleTotpReview}>
+                                    Confirm Approve
+                                </button>
+                                <button className="btn btn-secondary"
+                                    onClick={() => setTotpReviewModal({ open: false, requestId: null, action: null, note: '' })}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="alert alert-warning mb-4" style={{ fontSize: 13 }}>
+                                The user will be notified of this decision. Please provide a short reason.
+                            </div>
+                            <div className="form-group">
+                                <label>Rejection Reason *</label>
+                                <textarea
+                                    className="form-control"
+                                    rows={3}
+                                    placeholder="e.g. Cannot verify identity. Contact IT helpdesk in person."
+                                    value={totpReviewModal.note}
+                                    onChange={e => setTotpReviewModal(m => ({ ...m, note: e.target.value }))}
+                                />
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    className="btn btn-danger flex-1"
+                                    disabled={!totpReviewModal.note.trim()}
+                                    onClick={handleTotpReview}
+                                >
+                                    Confirm Reject
+                                </button>
+                                <button className="btn btn-secondary"
+                                    onClick={() => setTotpReviewModal({ open: false, requestId: null, action: null, note: '' })}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </Modal>
             )}
         </div>

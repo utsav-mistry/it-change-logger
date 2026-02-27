@@ -10,28 +10,31 @@ function todayUTC() {
     return new Date().toISOString().slice(0, 10);
 }
 
-// Get or create today's draft for the logged-in user
+// Get today's work log for the logged-in user (does NOT auto-create a draft)
 exports.getMyToday = async (req, res) => {
     try {
         const date = todayUTC();
-        let log = await WorkLog.findOne({ employee: req.user.userId, date });
-        if (!log) {
-            // Create a draft
-            log = new WorkLog({ employee: req.user.userId, date, content: '', isSubmitted: false });
-            await log.save();
-        }
+        const log = await WorkLog.findOne({ employee: req.user.userId, date });
+        // Return null cleanly — do NOT auto-create a draft here.
+        // Drafts are only created when the user explicitly clicks "Save Draft".
+        if (!log) return res.status(204).end();
         res.json(log);
     } catch (err) {
         res.status(500).json({ message: 'Server error' });
     }
 };
 
-// Save draft (not submitted yet)
+// Save draft (not submitted yet) — creates the draft if it doesn't exist yet
 exports.saveDraft = async (req, res) => {
     try {
         const date = todayUTC();
-        const log = await WorkLog.findOne({ employee: req.user.userId, date });
-        if (!log) return res.status(404).json({ message: 'No draft for today found' });
+        let log = await WorkLog.findOne({ employee: req.user.userId, date });
+
+        if (!log) {
+            // First save — create the draft now (not on page load)
+            log = new WorkLog({ employee: req.user.userId, date, content: '', isSubmitted: false });
+        }
+
         if (log.isSubmitted) return res.status(400).json({ message: 'Already submitted. Cannot edit.' });
 
         log.content = req.body.content || '';
@@ -46,17 +49,22 @@ exports.saveDraft = async (req, res) => {
 exports.submitLog = async (req, res) => {
     try {
         const date = todayUTC();
-        const log = await WorkLog.findOne({ employee: req.user.userId, date });
-        if (!log) return res.status(404).json({ message: 'No draft found for today' });
+        let log = await WorkLog.findOne({ employee: req.user.userId, date });
+
+        // If user writes and submits directly without saving a draft first, create the record now
+        if (!log) {
+            log = new WorkLog({ employee: req.user.userId, date, content: '', isSubmitted: false });
+        }
+
         if (log.isSubmitted) return res.status(400).json({ message: 'Already submitted for today' });
-        if (!log.content || log.content.replace(/<[^>]+>/g, '').trim().length === 0) {
+        if (!req.body.content || req.body.content.replace(/<[^>]+>/g, '').trim().length === 0) {
             return res.status(400).json({ message: 'Work log content cannot be empty before submission' });
         }
 
         log.isSubmitted = true;
         log.submittedAt = new Date();
         log.submittedAtTimezone = req.body.timezone || 'UTC';
-        log.content = req.body.content || log.content;
+        log.content = req.body.content;
         log.ipAddress = req.ip || req.headers['x-forwarded-for'] || '';
         await log.save();
 
@@ -66,6 +74,7 @@ exports.submitLog = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
 
 // Get my historical logs (paginated)
 exports.getMyHistory = async (req, res) => {
@@ -89,11 +98,12 @@ exports.getMyHistory = async (req, res) => {
     }
 };
 
-// Admin: list all work logs (filterable)
+// Admin: list all work logs — SUBMITTED only. Drafts are private to the employee.
 exports.adminListLogs = async (req, res) => {
     try {
         const { page = 1, limit = 30, userId, department, date, from, to } = req.query;
-        const query = {};
+        // Hard filter: admins NEVER see drafts
+        const query = { isSubmitted: true };
 
         if (userId) query.employee = userId;
         if (date) query.date = date;
@@ -122,8 +132,12 @@ exports.adminListLogs = async (req, res) => {
         const logs = await WorkLog.find(query)
             .populate({
                 path: 'employee',
-                select: 'username displayName department',
-                populate: { path: 'department', select: 'name' },
+                select: 'username displayName department role isDepartmentHead',
+                populate: {
+                    path: 'department',
+                    select: 'name head',
+                    populate: { path: 'head', select: 'displayName' }
+                },
             })
             .sort({ date: -1, submittedAt: -1 })
             .skip((parseInt(page) - 1) * parseInt(limit))
@@ -245,5 +259,27 @@ exports.exportPDF = async (req, res) => {
         doc.end();
     } catch (err) {
         res.status(500).json({ message: 'PDF export failed', error: err.message });
+    }
+};
+
+// Delete a work log (only allowed for drafts). Admins can delete any draft; submitted logs cannot be deleted.
+exports.deleteLog = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const log = await WorkLog.findById(id);
+        if (!log) return res.status(404).json({ message: 'Work log not found' });
+
+        // Prevent deletion of submitted logs
+        if (log.isSubmitted) return res.status(403).json({ message: 'Cannot delete submitted work logs' });
+
+        // Allow owner to delete their own drafts, or admins to delete any draft
+        if (log.employee.toString() !== req.user.userId && !(req.user.role === 'Admin' || req.user.role === 'IT Admin')) {
+            return res.status(403).json({ message: 'Not authorized to delete this work log' });
+        }
+
+        await WorkLog.findByIdAndDelete(id);
+        res.json({ message: 'Work log deleted' });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error' });
     }
 };

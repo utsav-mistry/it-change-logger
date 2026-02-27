@@ -1,6 +1,7 @@
 const CompanySettings = require('../models/CompanySettings');
 const User = require('../models/User');
-const { totp } = require('otplib');
+const { authenticator } = require('otplib');
+const { createRecoveryCodes } = require('../utils/totp');
 const QRCode = require('qrcode');
 const logger = require('../utils/logger');
 
@@ -38,12 +39,14 @@ exports.completeSetup = async (req, res) => {
         await user.save();
 
         // Generate TOTP secret for admin
-        const secret = totp.generateSecret();
-        const otpAuthUrl = `otpauth://totp/IT-Logger:${user.username}?secret=${secret}&issuer=IT-Logger`;
+        const secret = authenticator.generateSecret();
+        const appLabel = `${companyName.trim()} IT Logger`;
+        const otpAuthUrl = `otpauth://totp/${encodeURIComponent(appLabel)}:${encodeURIComponent(user.username)}?secret=${secret}&issuer=${encodeURIComponent(appLabel)}`;
         const qrDataUrl = await QRCode.toDataURL(otpAuthUrl);
 
         user.totpSecret = secret;
-        user.totpEnrolled = false;
+        user.totpEnrolled = true;
+        user.totpEnabled = false;
         await user.save();
 
         // Save company settings
@@ -77,14 +80,18 @@ exports.confirmSetupTotp = async (req, res) => {
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
 
-        const isValid = totp.check(token, user.totpSecret);
+        const isValid = authenticator.check(token, user.totpSecret);
         if (!isValid) return res.status(400).json({ message: 'Invalid TOTP code' });
 
         user.totpEnabled = true;
         user.totpEnrolled = true;
+
+        // generate recovery codes for admin (returned once)
+        const { plain, entries } = await createRecoveryCodes(10);
+        user.totpRecoveryCodes = entries;
         await user.save();
 
-        res.json({ message: 'TOTP enrolled successfully' });
+        res.json({ message: 'TOTP enrolled successfully', recoveryCodes: plain });
     } catch (err) {
         logger.error(`TOTP confirm error: ${err.message}`);
         res.status(500).json({ message: 'Server error' });

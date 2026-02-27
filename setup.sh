@@ -265,3 +265,28 @@ echo "  Logs:"
 echo "    App:   $SCRIPT_DIR/backend/logs/"
 echo "    PM2:   pm2 logs it-change-logger"
 echo "========================================="
+
+# ── Make update.sh executable ──────────────────────────────────────────────────
+chmod +x "$SCRIPT_DIR/update.sh" 2>/dev/null || true
+
+echo ""
+echo "========================================="
+echo "  Auto-Update Setup"
+echo "========================================="
+echo "  Run updates manually any time:"
+echo "    $SCRIPT_DIR/update.sh"
+echo ""
+echo "  To schedule automatic updates via cron, run:"
+echo "    crontab -e"
+echo ""
+echo "  Then add ONE of the following lines:"
+echo ""
+echo "  # Update nightly at 2:30 AM (recommended for most setups):"
+echo "  30 2 * * * $SCRIPT_DIR/update.sh >> $SCRIPT_DIR/backend/logs/update.log 2>&1"
+echo ""
+echo "  # Update every Sunday at 3:00 AM (low-traffic setups):"
+echo "  0 3 * * 0 $SCRIPT_DIR/update.sh >> $SCRIPT_DIR/backend/logs/update.log 2>&1"
+echo ""
+echo "  Update log: $SCRIPT_DIR/backend/logs/update.log"
+echo "========================================="
+

@@ -5,6 +5,16 @@ const { objectsToCSV } = require('../utils/csv');
 const PDFDocument = require('pdfkit');
 const logger = require('../utils/logger');
 
+// Format milliseconds to human-readable time (h/m/s)
+function formatMillisToTime(ms) {
+    if (!ms || ms <= 0) return '0h 0m 0s';
+    const totalSeconds = Math.round(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}h ${minutes}m ${seconds}s`;
+}
+
 // ── Date range helpers ─────────────────────────────────────────────────────────
 function getPeriodRange(period, from, to) {
     const now = new Date();
@@ -46,7 +56,15 @@ async function buildReportData(dateFrom, dateTo) {
     const [incidents, byPriorityAgg, byStateAgg, byChannelAgg, byHourAgg, byHandlerAgg, resolutionAgg] =
         await Promise.all([
             Incident.find(query)
-                .populate('createdInToolBy', 'displayName username')
+                .populate({
+                    path: 'createdInToolBy',
+                    select: 'displayName username department role isDepartmentHead',
+                    populate: {
+                        path: 'department',
+                        select: 'name head',
+                        populate: { path: 'head', select: 'displayName' }
+                    }
+                })
                 .populate('handledByUser', 'displayName username')
                 .lean(),
             Incident.aggregate([{ $match: query }, { $group: { _id: '$priority', count: { $sum: 1 } } }]),
@@ -103,9 +121,11 @@ async function buildReportData(dateFrom, dateTo) {
         handlerMap[handlerName] = (handlerMap[handlerName] || 0) + 1;
     }
 
-    const avgResolutionHours = resolutionAgg.length > 0
-        ? +(resolutionAgg[0].avgMs / 1000 / 3600).toFixed(2)
+    const avgResolutionMs = resolutionAgg.length > 0 && resolutionAgg[0].avgMs
+        ? resolutionAgg[0].avgMs
         : 0;
+    const avgResolutionHours = avgResolutionMs > 0 ? +(avgResolutionMs / 1000 / 3600).toFixed(2) : 0;
+    const avgResolutionFormatted = formatMillisToTime(avgResolutionMs);
 
     // Time-of-day: fill all 24 hours
     const hourDistribution = Array.from({ length: 24 }, (_, h) => {
@@ -114,7 +134,7 @@ async function buildReportData(dateFrom, dateTo) {
     });
 
     return {
-        total, resolved, unresolved, avgResolutionHours,
+        total, resolved, unresolved, avgResolutionHours, avgResolutionFormatted, avgResolutionMs,
         byPriority: byPriorityAgg.reduce((a, i) => ({ ...a, [i._id]: i.count }), {}),
         byState: byStateAgg.reduce((a, i) => ({ ...a, [i._id]: i.count }), {}),
         byChannel: byChannelAgg.reduce((a, i) => ({ ...a, [i._id]: i.count }), {}),
@@ -155,12 +175,15 @@ exports.generateCSV = async (req, res) => {
             'Handler': inc.handledByType === 'self' ? (inc.createdInToolBy?.displayName || '') :
                 inc.handledByType === 'selfResolved' ? `${inc.raisedBy} (Self)` : (inc.handledByName || ''),
             'Created By': inc.createdInToolBy?.displayName || '',
+            'Dept Head': (['Admin', 'IT Admin'].includes(inc.createdInToolBy?.role) || (inc.createdInToolBy?.department?.head && String(inc.createdInToolBy.department.head._id) === String(inc.createdInToolBy._id)))
+                ? '—' : (inc.createdInToolBy?.department?.head?.displayName || '—'),
             'Resolution Time (UTC)': inc.resolutionTime ? new Date(inc.resolutionTime).toISOString() : '',
             'Issue': (inc.issue || '').replace(/<[^>]+>/g, '').slice(0, 200),
             'Resolution': (inc.resolution || '').replace(/<[^>]+>/g, '').slice(0, 200),
         }));
 
         const csv = objectsToCSV(rows);
+        logger.info(`CSV generated: ${rows.length} incidents, ${csv.length} bytes`);
 
         await ReportDownload.create({
             reportType: type,
@@ -172,7 +195,7 @@ exports.generateCSV = async (req, res) => {
             filters: { period, from, to },
         });
 
-        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="incidents-${type}-${Date.now()}.csv"`);
         res.send(csv);
     } catch (err) {
@@ -235,7 +258,7 @@ exports.generatePDF = async (req, res) => {
             ['Total Incidents', String(data.total)],
             ['Resolved', String(data.resolved)],
             ['Unresolved', String(data.unresolved)],
-            ['Avg Resolution Time', `${data.avgResolutionHours} hrs`],
+            ['Avg Resolution Time', data.avgResolutionFormatted || '0h 0m 0s'],
         ];
         const colW = [200, 100];
         for (const [i, row] of summaryRows.entries()) {
@@ -317,21 +340,23 @@ exports.generatePDF = async (req, res) => {
         // ── Time of Day Distribution (text table) ───────────────────────────────────
         if (doc.y > 650) doc.addPage();
         doc.fontSize(11).font('Helvetica-Bold').fillColor('#000000').text('Time-of-Day Distribution (UTC Hour)', 50);
-        doc.y += 6;
+        doc.y += 8;
         const hourGroups = [];
-        for (let i = 0; i < 24; i += 6) {
-            hourGroups.push(data.hourDistribution.slice(i, i + 6));
+        for (let i = 0; i < 24; i += 4) {
+            hourGroups.push(data.hourDistribution.slice(i, i + 4));
         }
         for (const [gi, group] of hourGroups.entries()) {
             const bg = gi % 2 === 0 ? '#f5f5f5' : '#ffffff';
-            doc.rect(50, doc.y, 495, 18).fill(bg);
+            doc.rect(50, doc.y, 495, 20).fill(bg);
             let x = 55;
             for (const item of group) {
-                doc.fillColor('#333333').fontSize(8).font('Helvetica')
-                    .text(`${item.hour}: ${item.count}`, x, doc.y + 4, { width: 78 });
-                x += 82;
+                doc.fillColor('#333333').fontSize(9).font('Helvetica')
+                    .text(`${item.hour}:`, x, doc.y + 3, { width: 50 });
+                doc.fillColor('#666666').fontSize(9).font('Helvetica-Bold')
+                    .text(String(item.count), x + 50, doc.y + 3, { width: 30 });
+                x += 120;
             }
-            doc.y += 18;
+            doc.y += 20;
         }
         drawHRule(doc.y + 4);
         doc.y += 14;
@@ -344,12 +369,13 @@ exports.generatePDF = async (req, res) => {
         // Table header
         doc.rect(50, doc.y, 495, 16).fill('#333333');
         const cols = [
-            { label: 'ID', x: 55, w: 40 },
-            { label: 'Priority', x: 100, w: 55 },
-            { label: 'State', x: 160, w: 70 },
-            { label: 'Product', x: 235, w: 100 },
-            { label: 'Raised By', x: 340, w: 100 },
-            { label: 'Raised At', x: 445, w: 95 },
+            { label: 'ID', x: 55, w: 35 },
+            { label: 'Priority', x: 95, w: 50 },
+            { label: 'State', x: 150, w: 60 },
+            { label: 'Product', x: 215, w: 90 },
+            { label: 'Dept Head', x: 310, w: 90 },
+            { label: 'Raised By', x: 405, w: 80 },
+            { label: 'Raised At', x: 490, w: 55 },
         ];
         for (const col of cols) {
             doc.fillColor('#ffffff').fontSize(8).font('Helvetica-Bold')
@@ -362,12 +388,13 @@ exports.generatePDF = async (req, res) => {
             const bg = i % 2 === 0 ? '#f9f9f9' : '#ffffff';
             doc.rect(50, doc.y, 495, 15).fill(bg);
             const row = [
-                { text: `#${inc.incidentId}`, x: 55, w: 40 },
-                { text: inc.priority, x: 100, w: 55 },
-                { text: inc.state, x: 160, w: 70 },
-                { text: (inc.product || '').slice(0, 18), x: 235, w: 100 },
-                { text: (inc.raisedBy || '').slice(0, 18), x: 340, w: 100 },
-                { text: inc.raisedAt ? new Date(inc.raisedAt).toISOString().slice(0, 10) : '', x: 445, w: 95 },
+                { text: `#${inc.incidentId}`, x: 55, w: 35 },
+                { text: inc.priority, x: 95, w: 50 },
+                { text: inc.state, x: 150, w: 60 },
+                { text: (inc.product || '').slice(0, 18), x: 215, w: 90 },
+                { text: ((['Admin', 'IT Admin'].includes(inc.createdInToolBy?.role) || (inc.createdInToolBy?.department?.head && String(inc.createdInToolBy.department.head._id) === String(inc.createdInToolBy._id))) ? '—' : (inc.createdInToolBy?.department?.head?.displayName || '—')).slice(0, 18), x: 310, w: 90 },
+                { text: (inc.raisedBy || '').slice(0, 18), x: 405, w: 80 },
+                { text: inc.raisedAt ? new Date(inc.raisedAt).toISOString().slice(0, 10) : '', x: 490, w: 55 },
             ];
             for (const cell of row) {
                 doc.fillColor('#222222').fontSize(8).font('Helvetica')

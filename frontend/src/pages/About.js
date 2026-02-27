@@ -71,7 +71,7 @@ export default function About() {
                             <h3>Legal</h3>
                             <p style={{ marginTop: 4 }}>For usage terms, please review our Terms and Conditions.</p>
                         </div>
-                        <Link to="/terms" className="btn btn-secondary btn-sm">View Terms</Link>
+                        <Link to="/app/terms" className="btn btn-secondary btn-sm">View Terms</Link>
                     </div>
                 </div>
             </div>

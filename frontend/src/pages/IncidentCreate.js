@@ -22,8 +22,6 @@ export default function IncidentCreate() {
         channelOther: '',
         product: '',
         issue: '',
-        handledByType: 'self',
-        handledByName: '',
         state: 'Open',
     });
 
@@ -117,42 +115,6 @@ export default function IncidentCreate() {
                         <textarea className="form-control" placeholder="Describe the issue..." rows={5}
                             value={form.issue} onChange={e => setField('issue', e.target.value)}
                             style={{ fontFamily: 'inherit' }} />
-                    </div>
-                </div>
-
-                <div className="card mb-4">
-                    <div className="card-header">
-                        <span className="card-title">Assignment</span>
-                    </div>
-                    <div className="form-group">
-                        <label className="form-label">Handled By *</label>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {[
-                                { value: 'self', label: `${user?.displayName || 'You'} (logged-in user)` },
-                                { value: 'selfResolved', label: form.raisedBy ? `${form.raisedBy} (self-resolved)` : '(fill Raised By first) — self-resolved' },
-                                { value: 'other', label: 'Another person' },
-                            ].map(opt => (
-                                <label key={opt.value} style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontSize: 13, color: 'var(--text-secondary)' }}>
-                                    <input type="radio" name="handledByType" value={opt.value}
-                                        checked={form.handledByType === opt.value}
-                                        onChange={e => setField('handledByType', e.target.value)} />
-                                    {opt.label}
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-                    {form.handledByType === 'other' && (
-                        <div className="form-group">
-                            <label className="form-label">Handler Name</label>
-                            <input className="form-control" placeholder="Name of the person who handled this"
-                                value={form.handledByName} onChange={e => setField('handledByName', e.target.value)} />
-                        </div>
-                    )}
-                    <div className="form-group">
-                        <label className="form-label">Initial State</label>
-                        <select className="form-control" value={form.state} onChange={e => setField('state', e.target.value)}>
-                            {['Open', 'In Progress', 'On Hold'].map(s => <option key={s}>{s}</option>)}
-                        </select>
                     </div>
                 </div>
 

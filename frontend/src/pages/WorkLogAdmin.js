@@ -14,6 +14,7 @@ export default function WorkLogAdmin() {
     const [loading, setLoading] = useState(true);
     const [exporting, setExporting] = useState(null);
     const [expandedId, setExpandedId] = useState(null);
+    const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
     const [filters, setFilters] = useState({
         userId: '', department: '', date: '', from: '', to: '',
@@ -155,6 +156,7 @@ export default function WorkLogAdmin() {
                                     <th>Date</th>
                                     <th>Employee</th>
                                     <th>Department</th>
+                                    <th>Dept Head</th>
                                     <th>Submitted At</th>
                                     <th>Status</th>
                                     <th>Preview</th>
@@ -177,6 +179,10 @@ export default function WorkLogAdmin() {
                                                 <div className="text-xs text-muted">@{log.employee?.username}</div>
                                             </td>
                                             <td className="text-muted text-sm">{log.employee?.department?.name || '—'}</td>
+                                            <td className="text-muted text-sm">
+                                                {(['Admin', 'IT Admin'].includes(log.employee?.role) || (log.employee?.department?.head && log.employee.department.head._id === log.employee._id))
+                                                    ? '—' : (log.employee?.department?.head?.displayName || '—')}
+                                            </td>
                                             <td className="text-sm text-muted">
                                                 {log.submittedAt ? new Date(log.submittedAt).toLocaleString() : '—'}
                                             </td>
@@ -191,12 +197,33 @@ export default function WorkLogAdmin() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <button
-                                                    className="btn btn-secondary btn-sm"
-                                                    onClick={() => setExpandedId(expandedId === log._id ? null : log._id)}
-                                                >
-                                                    {expandedId === log._id ? 'Collapse' : 'View'}
-                                                </button>
+                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                    <button
+                                                        className="btn btn-secondary btn-sm"
+                                                        onClick={() => setExpandedId(expandedId === log._id ? null : log._id)}
+                                                    >
+                                                        {expandedId === log._id ? 'Collapse' : 'View'}
+                                                    </button>
+                                                    {!log.isSubmitted && confirmDeleteId !== log._id && (
+                                                        <button className="btn btn-outline btn-sm" onClick={() => setConfirmDeleteId(log._id)}>
+                                                            Delete
+                                                        </button>
+                                                    )}
+                                                    {!log.isSubmitted && confirmDeleteId === log._id && (
+                                                        <>
+                                                            <button className="btn btn-danger btn-sm" onClick={async () => {
+                                                                try {
+                                                                    await api.delete(`/worklogs/${log._id}`);
+                                                                    toast.success('Draft deleted');
+                                                                    setConfirmDeleteId(null);
+                                                                    fetchLogs(page);
+                                                                } catch (e) { toast.error(e.response?.data?.message || 'Delete failed'); setConfirmDeleteId(null); }
+                                                            }}>Yes, delete</button>
+                                                            <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                                                        </>
+                                                    )}
+                                                </div>
+
                                             </td>
                                         </tr>
                                         {expandedId === log._id && (

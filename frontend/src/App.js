@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { useLocation } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
 import Layout from './components/Layout';
 import { LoadingPage } from './components/UI';
@@ -20,6 +21,7 @@ import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import About from './pages/About';
 import Terms from './pages/Terms';
+import SetupTerms from './pages/SetupTerms';
 import WorkLog from './pages/WorkLog';
 import WorkLogAdmin from './pages/WorkLogAdmin';
 
@@ -27,6 +29,7 @@ import api from './api/client';
 
 function SetupGate({ children }) {
     const [initialized, setInitialized] = useState(null);
+    const location = useLocation();
 
     useEffect(() => {
         api.get('/setup/status')
@@ -35,7 +38,10 @@ function SetupGate({ children }) {
     }, []);
 
     if (initialized === null) return <LoadingPage />;
-    if (!initialized) return <SetupPage onComplete={() => setInitialized(false)} />;
+    // Allow access to public terms pages while not initialized
+    if (!initialized && (location.pathname === '/setup/terms' || location.pathname === '/terms')) return children;
+    if (!initialized) return <SetupPage onComplete={() => setInitialized(true)} />;
+
     return children;
 }
 
@@ -50,6 +56,13 @@ function AuthGuard() {
     );
 }
 
+function LoginGuard() {
+    const { user, loading } = useAuth();
+    if (loading) return <LoadingPage />;
+    if (user) return <Navigate to="/dashboard" replace />;
+    return <Outlet />;
+}
+
 function AdminGuard() {
     const { user } = useAuth();
     const isAdmin = user?.role === 'Admin' || user?.role === 'IT Admin';
@@ -61,8 +74,13 @@ function AppRoutes() {
     return (
         <SetupGate>
             <Routes>
-                <Route path="/login" element={<LoginPage />} />
+                <Route element={<LoginGuard />}>
+                    <Route path="/login" element={<LoginPage />} />
+                </Route>
+
+                {/* Public standalone terms — accessible without login (e.g. from setup page) */}
                 <Route path="/terms" element={<Terms standalone />} />
+                <Route path="/setup/terms" element={<SetupTerms />} />
 
                 <Route element={<AuthGuard />}>
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -74,6 +92,8 @@ function AppRoutes() {
                     <Route path="/notifications" element={<NotificationPage />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/about" element={<About />} />
+                    {/* Terms inside the app — shown within the Layout with a Back button */}
+                    <Route path="/app/terms" element={<Terms />} />
 
                     <Route element={<AdminGuard />}>
                         <Route path="/users" element={<UserManagement />} />

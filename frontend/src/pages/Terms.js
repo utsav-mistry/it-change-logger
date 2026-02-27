@@ -1,7 +1,12 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-export default function Terms({ standalone }) {
+export default function Terms({ standalone: standaloneProp }) {
+    const location = useLocation();
+    const navigate = useNavigate();
+    const qs = new URLSearchParams(location.search);
+    const standalone = standaloneProp || qs.get('standalone') === '1' || qs.get('standalone') === 'true';
+
     const content = (
         <div className="static-page">
             <h2>Terms and Conditions</h2>
@@ -47,16 +52,11 @@ export default function Terms({ standalone }) {
                 proper attribution to the original author as indicated in this document and in the About
                 section of the application.
             </p>
-
-            {!standalone && (
-                <div style={{ marginTop: 24 }}>
-                    <Link to="/about" className="btn btn-secondary btn-sm">Back to About</Link>
-                </div>
-            )}
         </div>
     );
 
     if (standalone) {
+        // Full-page view for unauthenticated access (e.g. from setup or login page)
         return (
             <div style={{
                 minHeight: '100vh',
@@ -69,12 +69,23 @@ export default function Terms({ standalone }) {
                 <div style={{ maxWidth: 700, width: '100%' }}>
                     {content}
                     <div style={{ marginTop: 24 }}>
-                        <Link to="/login" className="btn btn-secondary btn-sm">Back to Login</Link>
+                        <button className="btn btn-secondary btn-sm" onClick={() => navigate(-1)}>
+                            Close
+                        </button>
                     </div>
                 </div>
             </div>
         );
     }
 
-    return <div className="animate-fadeIn">{content}</div>;
+    // In-app view: rendered inside the Layout, with a back link
+    return (
+        <div className="animate-fadeIn">
+            {content}
+            <div style={{ marginTop: 24 }}>
+                <Link to="/about" className="btn btn-secondary btn-sm">← Back to About</Link>
+            </div>
+        </div>
+    );
 }
+

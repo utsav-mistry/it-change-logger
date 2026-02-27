@@ -97,6 +97,7 @@ export default function Layout({ children }) {
                                 <NavLink
                                     key={item.to}
                                     to={item.to}
+                                    end={item.to === '/reports'}
                                     className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                                 >
                                     <Icon char={item.icon} />
