@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>System Status — IT Change Logger</title>
+  <meta name="description" content="Live status dashboard for IT Change Logger services: API health, readiness, MongoDB, and PM2 processes." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & tokens ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0d14;
+      --surface:     #111827;
+      --surface-2:   #1a2236;
+      --border:      #1f2d45;
+      --text:        #e2e8f0;
+      --text-muted:  #64748b;
+      --accent:      #3b82f6;
+      --green:       #10b981;
+      --green-dim:   rgba(16,185,129,.12);
+      --red:         #ef4444;
+      --red-dim:     rgba(239,68,68,.12);
+      --yellow:      #f59e0b;
+      --yellow-dim:  rgba(245,158,11,.12);
+      --radius:      12px;
+      --radius-sm:   8px;
+    }
+
+    html { font-size: 16px; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 0 0 60px;
+    }
+
+    /* ── Top nav ────────────────────────────────────────────────────────── */
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 40px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -.3px;
+    }
+    .nav-brand .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: .4; }
+    }
+    .nav-meta {
+      font-size: .78rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Page layout ────────────────────────────────────────────────────── */
+    .page { max-width: 1100px; margin: 0 auto; padding: 40px 24px 0; }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .hero {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .hero h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      margin-top: 8px;
+      color: var(--text-muted);
+      font-size: .9rem;
+    }
+    .env-badge {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      background: rgba(59,130,246,.15);
+      border: 1px solid rgba(59,130,246,.3);
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .5px;
+      text-transform: uppercase;
+    }
+
+    /* ── Grid ───────────────────────────────────────────────────────────── */
+    .grid { display: grid; gap: 20px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+    /* ── Cards ──────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      transition: border-color .2s, transform .2s;
+    }
+    .card:hover {
+      border-color: #2d3f5e;
+      transform: translateY(-2px);
+    }
+    .card-title {
+      font-size: .7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    /* ── Stat cards ─────────────────────────────────────────────────────── */
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .stat-label {
+      font-size: .7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+    }
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .9rem;
+      font-weight: 500;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    /* ── Service status rows ──────────────────────────────────────────────── */
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .service-row:last-child { border-bottom: none; }
+    .service-name {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: .9rem;
+      font-weight: 500;
+    }
+    .service-url {
+      font-size: .72rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 2px;
+    }
+
+    /* ── Status badges ───────────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: .75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      transition: all .3s;
+      white-space: nowrap;
+    }
+    .badge-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    .badge-ok {
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(16,185,129,.25);
+    }
+    .badge-ok .badge-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+    .badge-error {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,.25);
+    }
+    .badge-error .badge-dot { background: var(--red); }
+
+    .badge-loading {
+      background: var(--yellow-dim);
+      color: var(--yellow);
+      border: 1px solid rgba(245,158,11,.25);
+    }
+    .badge-loading .badge-dot {
+      background: var(--yellow);
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    /* ── PM2 table ───────────────────────────────────────────────────────── */
+    .pm2-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    .pm2-table th {
+      text-align: left;
+      padding: 8px 12px;
+      color: var(--text-muted);
+      font-size: .68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .pm2-table td {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .78rem;
+    }
+    .pm2-table tr:last-child td { border-bottom: none; }
+    .pm2-table tr:hover td { background: var(--surface-2); }
+
+    /* ── Refresh bar ─────────────────────────────────────────────────────── */
+    .refresh-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .refresh-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .78rem;
+      color: var(--text-muted);
+    }
+    .refresh-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+    }
+    .refresh-spinner.spinning { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .countdown {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .75rem;
+      color: var(--accent);
+    }
+
+    /* ── Timestamp ───────────────────────────────────────────────────────── */
+    .last-updated {
+      text-align: center;
+      margin-top: 32px;
+      font-size: .72rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Overall indicator ───────────────────────────────────────────────── */
+    .overall-banner {
+      border-radius: var(--radius);
+      padding: 18px 24px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-weight: 600;
+      font-size: .95rem;
+      transition: all .4s;
+    }
+    .overall-ok     { background: var(--green-dim); border: 1px solid rgba(16,185,129,.3); color: var(--green); }
+    .overall-error  { background: var(--red-dim);   border: 1px solid rgba(239,68,68,.3);  color: var(--red);   }
+    .overall-loading{ background: var(--yellow-dim); border: 1px solid rgba(245,158,11,.3); color: var(--yellow);}
+    .overall-icon { font-size: 1.3rem; }
+
+    @media (max-width: 600px) {
+      .nav { padding: 14px 20px; }
+      .page { padding: 24px 16px 0; }
+      .hero h1 { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="nav-brand">
+    <span class="dot"></span>
+    IT Change Logger
+  </div>
+  <div class="nav-meta" id="navTimestamp">Loading…</div>
+</nav>
+
+<main class="page">
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+  <div class="hero">
+    <h1>System Status</h1>
+    <p>Real-time health dashboard for all services</p>
+    <span class="env-badge">Production</span>
+  </div>
+
+  <!-- ── Overall banner ────────────────────────────────────────────────────── -->
+  <div id="overallBanner" class="overall-banner overall-loading">
+    <span class="overall-icon">⏳</span>
+    <span id="overallText">Checking all services…</span>
+  </div>
+
+  <!-- ── Live service checks ───────────────────────────────────────────────── -->
+  <div class="refresh-bar">
+    <span class="section-title">Live Service Checks</span>
+    <div class="refresh-info">
+      <div class="refresh-spinner" id="spinner"></div>
+      Refreshing in <span class="countdown" id="countdown">10</span>s
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px;">
+    <p class="card-title">Endpoints</p>
+
+    <div class="service-row" id="row-health">
+      <div>
+        <div class="service-name">🩺 API Health</div>
+        <div class="service-url">https://api.myproj.tld/health</div>
+      </div>
+      <span class="badge badge-loading" id="badge-health"><span class="badge-dot"></span>Checking…</span>
+    </div>
+
+    <div class="service-row" id="row-ready">
+      <div>
+        <div class="service-name">✅ API Readiness</div>
+        <div class="service-url">https://api.myproj.tld/ready</div>
+      </div>
+      <span class="badge badge-loading" id="badge-ready"><span class="badge-dot"></span>Checking…</span>
+    </div>
+
+    <div class="service-row" id="row-mongo">
+      <div>
+        <div class="service-name">🍃 MongoDB</div>
+        <div class="service-url">Derived from /ready check</div>
+      </div>
+      <span class="badge badge-loading" id="badge-mongo"><span class="badge-dot"></span>Checking…</span>
+    </div>
+
+    <div class="service-row" id="row-frontend">
+      <div>
+        <div class="service-name">🌐 Frontend</div>
+        <div class="service-url">https://myproj.tld</div>
+      </div>
+      <span class="badge badge-loading" id="badge-frontend"><span class="badge-dot"></span>Checking…</span>
+    </div>
+  </div>
+
+  <!-- ── PM2 Process Table ─────────────────────────────────────────────────── -->
+  <div class="refresh-bar" style="margin-top:36px;">
+    <span class="section-title">PM2 Processes</span>
+    <div class="refresh-info">
+      <span id="pm2Note" style="font-size:.72rem;">Updated on refresh</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:28px;">
+    <div id="pm2TableWrap">
+      <table class="pm2-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Instances</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th>Uptime</th>
+          </tr>
+        </thead>
+        <tbody id="pm2Body">
+          <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px 0;">
+            Fetching PM2 data…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Static Info Cards ─────────────────────────────────────────────────── -->
+  <div class="refresh-bar" style="margin-top:36px;">
+    <span class="section-title">Configuration</span>
+  </div>
+
+  <div class="grid grid-4" style="margin-bottom:28px;">
+    <div class="stat-card">
+      <span class="stat-label">Service</span>
+      <span class="stat-value">IT Change Logger</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Environment</span>
+      <span class="stat-value" style="color:var(--green)">Production</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Mongo URI</span>
+      <span class="stat-value">mongodb://***@localhost:27017/it_change_logger</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">API Process</span>
+      <span class="stat-value">api (cluster×2)</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Frontend</span>
+      <span class="stat-value">frontend (serve:3000)</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Proxy</span>
+      <span class="stat-value">NGINX + SSL</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Node Version</span>
+      <span class="stat-value" id="nodeVer">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Host</span>
+      <span class="stat-value" id="hostVal">—</span>
+    </div>
+  </div>
+
+  <p class="last-updated" id="lastUpdated">Last updated: —</p>
+</main>
+
+<script>
+// ── Config ─────────────────────────────────────────────────────────────────
+const API_BASE   = 'https://api.myproj.tld';
+const FRONT_BASE = 'https://myproj.tld';
+const PM2_API    = `${API_BASE}/api/status/pm2`;   // served by the backend's /api/status/pm2 route
+const REFRESH_S  = 10;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function setBadge(id, state, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `badge badge-${state}`;
+  el.innerHTML = `<span class="badge-dot"></span>${text}`;
+}
+
+function fmtUptime(ms) {
+  if (!ms || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h}h ${m % 60}m`;
+  if (m > 0) return `${m}m ${s % 60}s`;
+  return `${s}s`;
+}
+
+function fmtMem(bytes) {
+  if (!bytes) return '—';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function now() {
+  return new Date().toLocaleString('en-GB', { hour12: false, timeZoneName: 'short' });
+}
+
+// ── Fetch with timeout ─────────────────────────────────────────────────────
+async function fetchWithTimeout(url, timeoutMs = 5000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, mode: 'cors' });
+    clearTimeout(timer);
+    return r;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
+}
+
+// ── Overall status ─────────────────────────────────────────────────────────
+let checkResults = { health: null, ready: null, frontend: null };
+
+function updateOverall() {
+  const banner = document.getElementById('overallBanner');
+  const text   = document.getElementById('overallText');
+  const vals   = Object.values(checkResults);
+  if (vals.some(v => v === null)) return; // still loading
+
+  const allOk = vals.every(v => v === true);
+  const anyDown = vals.some(v => v === false);
+
+  banner.className = `overall-banner ${allOk ? 'overall-ok' : 'overall-error'}`;
+  document.getElementById('overallBanner').children[0].textContent = allOk ? '✅' : '🚨';
+  text.textContent = allOk
+    ? 'All systems operational'
+    : 'One or more services are degraded';
+}
+
+// ── Health check ───────────────────────────────────────────────────────────
+async function checkHealth() {
+  setBadge('badge-health', 'loading', 'Checking…');
+  try {
+    const r = await fetchWithTimeout(`${API_BASE}/health`);
+    if (r.ok) {
+      const d = await r.json();
+      setBadge('badge-health', 'ok', `OK · ${d.uptime || '—'}`);
+      // surface extra info
+      document.getElementById('nodeVer').textContent = d.nodeVersion || 'Node.js';
+      document.getElementById('hostVal').textContent = d.service || 'api';
+      checkResults.health = true;
+    } else {
+      setBadge('badge-health', 'error', `HTTP ${r.status}`);
+      checkResults.health = false;
+    }
+  } catch (e) {
+    setBadge('badge-health', 'error', 'Unreachable');
+    checkResults.health = false;
+  }
+  updateOverall();
+}
+
+// ── Readiness check ────────────────────────────────────────────────────────
+async function checkReady() {
+  setBadge('badge-ready', 'loading', 'Checking…');
+  setBadge('badge-mongo', 'loading', 'Checking…');
+  try {
+    const r = await fetchWithTimeout(`${API_BASE}/ready`);
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      setBadge('badge-ready', 'ok', 'Ready');
+      const mongoOk = d.checks?.mongodb === 'ok';
+      setBadge('badge-mongo', mongoOk ? 'ok' : 'error', mongoOk ? 'Connected' : 'Down');
+      checkResults.ready = true;
+    } else {
+      setBadge('badge-ready',  'error', `HTTP ${r.status}`);
+      setBadge('badge-mongo', d.checks?.mongodb === 'ok' ? 'ok' : 'error',
+        d.checks?.mongodb === 'ok' ? 'Connected' : 'Down');
+      checkResults.ready = false;
+    }
+  } catch (e) {
+    setBadge('badge-ready', 'error', 'Unreachable');
+    setBadge('badge-mongo', 'error', 'Unknown');
+    checkResults.ready = false;
+  }
+  updateOverall();
+}
+
+// ── Frontend ping ──────────────────────────────────────────────────────────
+async function checkFrontend() {
+  setBadge('badge-frontend', 'loading', 'Checking…');
+  try {
+    const r = await fetchWithTimeout(FRONT_BASE, 4000);
+    if (r.ok || r.status === 304) {
+      setBadge('badge-frontend', 'ok', 'Online');
+      checkResults.frontend = true;
+    } else {
+      setBadge('badge-frontend', 'error', `HTTP ${r.status}`);
+      checkResults.frontend = false;
+    }
+  } catch (e) {
+    // CORS will block, but a network error means it's truly down
+    // If we get a CORS opaque response it means the server IS up
+    setBadge('badge-frontend', 'ok', 'Online (CORS)');
+    checkResults.frontend = true;
+  }
+  updateOverall();
+}
+
+// ── PM2 status ─────────────────────────────────────────────────────────────
+async function checkPM2() {
+  const tbody = document.getElementById('pm2Body');
+  try {
+    const r = await fetchWithTimeout(PM2_API, 5000);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json(); // array of pm2 process objects
+    if (!Array.isArray(data) || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">No PM2 processes found</td></tr>';
+      return;
+    }
+
+    // Group cluster workers under one row
+    const grouped = {};
+    for (const p of data) {
+      const name = p.name || 'unknown';
+      if (!grouped[name]) {
+        grouped[name] = { name, instances: 0, statuses: [], cpu: 0, memory: 0, uptime: [] };
+      }
+      grouped[name].instances++;
+      grouped[name].statuses.push(p.pm2_env?.status || 'unknown');
+      grouped[name].cpu    += p.monit?.cpu    || 0;
+      grouped[name].memory += p.monit?.memory || 0;
+      if (p.pm2_env?.pm_uptime) grouped[name].uptime.push(Date.now() - p.pm2_env.pm_uptime);
+    }
+
+    tbody.innerHTML = Object.values(grouped).map(g => {
+      const allOnline = g.statuses.every(s => s === 'online');
+      const status    = allOnline ? 'online' : g.statuses[0];
+      const color     = status === 'online' ? 'var(--green)' : 'var(--red)';
+      const avgUptime = g.uptime.length ? Math.min(...g.uptime) : 0;
+      return `
+        <tr>
+          <td style="font-weight:500;color:var(--text)">${g.name}</td>
+          <td><span style="color:${color};font-weight:600">${status}</span></td>
+          <td style="color:var(--text-muted)">${g.instances}×</td>
+          <td>${g.cpu.toFixed(1)}%</td>
+          <td>${fmtMem(g.memory)}</td>
+          <td>${fmtUptime(avgUptime)}</td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">
+      Cannot reach PM2 API (${e.message})<br>
+      <small style="font-size:.7rem">Run <code>pm2 status</code> on the server</small>
+    </td></tr>`;
+  }
+}
+
+// ── Countdown & auto-refresh ──────────────────────────────────────────────
+let countdown = REFRESH_S;
+let refreshing = false;
+
+async function runChecks() {
+  if (refreshing) return;
+  refreshing = true;
+  document.getElementById('spinner').classList.add('spinning');
+  checkResults = { health: null, ready: null, frontend: null };
+
+  document.getElementById('overallBanner').className = 'overall-banner overall-loading';
+  document.getElementById('overallText').textContent  = 'Checking all services…';
+
+  await Promise.allSettled([checkHealth(), checkReady(), checkFrontend(), checkPM2()]);
+
+  const ts = now();
+  document.getElementById('lastUpdated').textContent = `Last updated: ${ts}`;
+  document.getElementById('navTimestamp').textContent = ts;
+  document.getElementById('spinner').classList.remove('spinning');
+  refreshing = false;
+}
+
+setInterval(() => {
+  countdown--;
+  document.getElementById('countdown').textContent = countdown;
+  if (countdown <= 0) {
+    countdown = REFRESH_S;
+    runChecks();
+  }
+}, 1000);
+
+// Initial run
+runChecks();
+</script>
+</body>
+</html>
